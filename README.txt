@@ -1,0 +1,1 @@
+GuildCraft v0.9.18 - Warm Classic theme. Based on working v0.9.17. Changes are cosmetic only: warm panel colors, gold accent, separate left-aligned profession name and right-aligned member count. Keep v0.9.17 backup. No in-game testing performed.
