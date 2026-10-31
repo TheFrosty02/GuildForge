@@ -1,7 +1,8 @@
-## Interface: 11509
+## Interface: 11509, 16001
 ## Title: |cffe7c483GuildCraft|r
-## Notes: Guild profession rankings, skill sync, known-recipe sharing, reagents and recipe search
-## Version: 0.10.0
+## Notes: Guild professions, recipes with reagents, craft requests, shopping list, cooldowns and item tooltips
+## Version: 0.12.0
 ## IconTexture: Interface\Icons\Trade_Engineering
+## AddonCompartmentFunc: GuildCraft_OnAddonCompartmentClick
 ## SavedVariables: GuildCraftDB
 GuildCraft.lua
