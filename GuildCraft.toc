@@ -1,6 +1,7 @@
 ## Interface: 11509
-## Title: GuildCraft (Classic Era Safe Visual Reset)
-## Notes: Guild profession rankings, skill sync, known-recipe sharing and recipe search
-## Version: 0.9.18-era-test
+## Title: |cffe7c483GuildCraft|r
+## Notes: Guild profession rankings, skill sync, known-recipe sharing, reagents and recipe search
+## Version: 0.10.0
+## IconTexture: Interface\Icons\Trade_Engineering
 ## SavedVariables: GuildCraftDB
 GuildCraft.lua
