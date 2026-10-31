@@ -1,4 +1,4 @@
-## Interface: 11507
+## Interface: 11509
 ## Title: GuildCraft (Classic Era Safe Visual Reset)
 ## Notes: Guild profession rankings, skill sync, known-recipe sharing and recipe search
 ## Version: 0.9.18-era-test
