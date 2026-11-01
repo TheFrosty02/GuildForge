@@ -1,7 +1,7 @@
 ## Interface: 11509, 16001
 ## Title: |cffe7c483GuildCraft|r
 ## Notes: Guild professions, recipes with reagents, craft requests, shopping list, cooldowns and item tooltips
-## Version: 0.12.0
+## Version: 0.13.0
 ## IconTexture: Interface\Icons\Trade_Engineering
 ## AddonCompartmentFunc: GuildCraft_OnAddonCompartmentClick
 ## SavedVariables: GuildCraftDB

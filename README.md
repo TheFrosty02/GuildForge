@@ -34,7 +34,7 @@ Collect the recipes you plan to make and GuildCraft combines them into one list 
 - **Search** recipes, crafters, professions and reagents (try "linen") across the whole guild, plus a **Have mats** filter for things you can craft right now.
 - **Item tooltips** show which guildmates craft an item and which recipes use it.
 - **Cooldowns** — Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild can see who's ready.
-- **Not known in guild** — recipes seen at trainers that nobody in the guild has learned yet, with the skill they require.
+- **Not known in guild** — recipes seen at trainers that nobody in the guild has learned yet, with the skill they require. Anyone's trainer visits fill in the list for the whole guild.
 - **Minimap button** — a "GC" bubble with a badge counting guildmates online with GuildCraft. Left-click to open, right-click to sync, drag to move.
 - **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
 
@@ -68,6 +68,7 @@ Your guildmates need GuildCraft too — the more people running it, the more com
 | `/guildcraft refresh` | Rescan your own professions |
 | `/guildcraft settings` | Open the settings panel |
 | `/guildcraft minimap` | Show or hide the minimap button |
+| `/guildcraft who` | List guildmates online with GuildCraft and their versions |
 | `/guildcraft status` | Print sync counters |
 
 ## Compatibility

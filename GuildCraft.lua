@@ -1,6 +1,6 @@
 -- GuildCraft 0.12.0 - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
 -- craft requests, shopping list, item tooltips, cooldowns, learnable recipes, summary-based syncing, settings
-local VERSION='0.12.0'
+local VERSION='0.13.0'
 local PREFIX='GCRFT96' -- preserve working profession sync protocol
 local RECIPE_PREFIX='GCRFT10'
 local frame=CreateFrame('Frame')
@@ -14,6 +14,8 @@ local sectionCollapsed, recipeOpen = {}, {}
 local recipeQueue, recipePending = {}, {}
 local recipeSent, recipeReceived = 0, 0
 local lastRecipeSend = 0
+local sendFailures, droppedMessages = 0, 0
+local addonVersions = {} -- nameId -> GuildCraft version heard this session ('' = older than 0.13)
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
 local activeSeen, guildOnline, guildLastSeen, guildMembers = {}, {}, {}, {}
 -- Member data is stored per guild. Until the guild name loads, messages land here and merge in later.
@@ -322,6 +324,31 @@ local function shareAllRecipes()
   if not mine or not mine.recipes then return end
   for prof in pairs(mine.recipes) do if craftable[prof] then queueRecipes(prof) end end
 end
+-- Recipes catalogued from trainers (or unlearned on Forever) that this client knows about.
+local function catalogList(prof)
+  local list={}
+  for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
+    if type(info)=='table' and info.source then list[#list+1]=name end
+  end
+  table.sort(list)
+  return list
+end
+local catalogQueuedAt={}
+local function queueCatalogSummaries()
+  for prof in pairs(craftable) do
+    local list=catalogList(prof)
+    if #list>0 then recipeQueue[#recipeQueue+1]='K|'..key()..'|'..prof..'|'..#list..':'..listHash(list) end
+  end
+end
+local function queueCatalog(prof)
+  if catalogQueuedAt[prof] and now()-catalogQueuedAt[prof]<30 then return end
+  catalogQueuedAt[prof]=now()
+  for _,name in ipairs(catalogList(prof)) do
+    local info=recipeInfo[prof][name]
+    local payload='T|'..key()..'|'..prof..'|'..clean(name)..'~'..(info.req or '')..'~'..(info.link or '')
+    if #payload<=250 then recipeQueue[#recipeQueue+1]=payload end
+  end
+end
 local function queueSummaries()
   local mine=db and db[key()]
   for prof,list in pairs(mine and mine.recipes or {}) do
@@ -438,6 +465,27 @@ local function receiveRecipe(msg,sender)
     recipeQueue[#recipeQueue+1]='G|'..key()..'|'..prof..'|'..who
   elseif action=='G' then
     if extra==key() then queueRecipes(prof) end
+  elseif action=='K' then
+    -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
+    local count,hash=(extra or ''):match('^(%d+):(%d+)$')
+    if not count then return end
+    local mine=catalogList(prof)
+    if #mine==tonumber(count) and listHash(mine)==tonumber(hash) then return end
+    local pullKey='K|'..pendingKey
+    if pullRequestedAt[pullKey] and now()-pullRequestedAt[pullKey]<60 then return end
+    pullRequestedAt[pullKey]=now()
+    recipeQueue[#recipeQueue+1]='J|'..key()..'|'..prof..'|'..who
+  elseif action=='J' then
+    if extra==key() then queueCatalog(prof) end
+  elseif action=='T' then
+    local name,req,link=(extra or ''):match('^([^~]+)~(%d*)~([^~]*)$')
+    if not name then return end
+    name=clean(name)
+    recipeInfo[prof]=recipeInfo[prof] or {}
+    if not recipeInfo[prof][name] then
+      recipeInfo[prof][name]={link=link:match('^[ie]%d+$') and link or nil,reagents={},remote=true,source='Trainer',req=tonumber(req)}
+      requestUpdate()
+    end
   elseif action=='C' then
     local name,remaining=(extra or ''):match('^([^~]+)~(%d+)$')
     if not name then return end
@@ -613,7 +661,7 @@ local function scanTrainer()
       end
     end
   end
-  if added>0 then log('Catalogued '..added..' trainer recipes.'); requestUpdate() end
+  if added>0 then log('Catalogued '..added..' trainer recipes; sharing with the guild.'); queueCatalogSummaries(); requestUpdate() end
 end
 local scanScheduled=false
 scanRecipes=function()
@@ -625,11 +673,13 @@ end
 -- Sync asks for summaries; guildmates pull only the lists that differ. Older clients still get full lists.
 local function doSync()
   save(); announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2')
-  queueSummaries(); checkCooldowns(); queueCooldowns(); requestUpdate()
+  addonSend('V|'..key()..'|'..VERSION)
+  queueSummaries(); queueCatalogSummaries(); checkCooldowns(); queueCooldowns(); requestUpdate()
   log('Guild sync request sent.')
 end
 local function doPush()
-  save(); fullQueuedAt={}; shareAllRecipes(); checkCooldowns(); queueCooldowns()
+  save(); fullQueuedAt={}; catalogQueuedAt={}; shareAllRecipes(); checkCooldowns(); queueCooldowns()
+  for prof in pairs(craftable) do queueCatalog(prof) end
   log('Sharing all of your recipes with the guild ('..#recipeQueue..' messages queued).',true)
 end
 local function doRefresh()
@@ -709,14 +759,24 @@ local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
   elseif GuildRoster then GuildRoster() end
 end
-local function activeUsers()
+local function versionLabel(id)
+  local version=addonVersions[id]
+  if version==nil then return 'version unknown' end
+  if version=='' then return 'older version' end
+  return 'v'..version
+end
+-- Names of guildmates online with GuildCraft (you first); withVersions appends each one's version.
+local function activeUsers(withVersions)
   local me=nameId(key())
-  local list={playerName() or 'You'}
+  local list={}
   local rosterKnown=next(guildOnline)~=nil
   for id,name in pairs(activeSeen) do
-    if id~=me and (not rosterKnown or guildOnline[id]) then list[#list+1]=name end
+    if id~=me and (not rosterKnown or guildOnline[id]) then
+      list[#list+1]=withVersions and (name..'  |cff909090'..versionLabel(id)..'|r') or name
+    end
   end
   table.sort(list)
+  table.insert(list,1,(playerName() or 'You')..(withVersions and ('  |cff909090v'..VERSION..'|r') or ''))
   return list
 end
 local function markSeen(who)
@@ -1236,6 +1296,8 @@ local function showCrafterTooltip(owner,prof,c)
   GameTooltip:AddLine(c.recipeCount..' recipes shared',.8,.8,.8)
   GameTooltip:AddLine(availabilityText(c),1,1,1)
   GameTooltip:AddLine('Data updated '..updatedLabel(c.updated),.6,.6,.6)
+  if c.isMe then GameTooltip:AddLine('GuildCraft v'..VERSION,.6,.6,.6)
+  elseif activeSeen[c.id] then GameTooltip:AddLine('GuildCraft '..versionLabel(c.id),.6,.6,.6) end
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('Click to show only their recipes',.4,.8,1)
   GameTooltip:Show()
@@ -1780,7 +1842,7 @@ end
 local function showMinimapTooltip(self)
   GameTooltip:SetOwner(self,'ANCHOR_LEFT')
   GameTooltip:AddLine('GuildCraft',1,.82,0)
-  local users=activeUsers()
+  local users=activeUsers(true)
   GameTooltip:AddLine(#users..' online with GuildCraft',1,1,1)
   for i=1,math.min(#users,15) do GameTooltip:AddLine('   '..users[i],.55,.9,.55) end
   if #users>15 then GameTooltip:AddLine('   and '..(#users-15)..' more',.6,.6,.6) end
@@ -1845,7 +1907,11 @@ SlashCmdList['GUILDCRAFT']=function(message)
   if message=='status' then
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
-    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d',recipeReceived,recipeSent,#recipeQueue),true)
+    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d',recipeReceived,recipeSent,#recipeQueue,droppedMessages),true)
+  elseif message=='who' then
+    local users=activeUsers(true)
+    log(#users..' online with GuildCraft:',true)
+    for _,line in ipairs(users) do log('   '..line,true) end
   elseif message=='sync' then doSync()
   elseif message=='push' then doPush()
   elseif message=='refresh' then doRefresh()
@@ -1855,7 +1921,7 @@ SlashCmdList['GUILDCRAFT']=function(message)
     if minimapButton then minimapButton:SetShown(not GuildCraftDB.minimap.hide) end
     log('Minimap button '..(GuildCraftDB.minimap.hide and 'hidden' or 'shown')..'.',true)
   elseif message=='help' then
-    log('/guildcraft opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; minimap toggles the button; status shows counters.',true)
+    log('/guildcraft opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; minimap toggles the button; who lists guildmates and their versions; status shows counters.',true)
   else toggle() end
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
@@ -1878,11 +1944,11 @@ frame:SetScript('OnEvent',function(_,event,...)
     requestRoster()
     log('v'..VERSION..' loaded. Click the GC minimap button or type /guildcraft to open.')
     -- Probe first so our name matches what guildmates see before the real sync goes out.
-    later(2,function() addonSend('V|'..key()) end)
+    later(2,function() addonSend('V|'..key()..'|'..VERSION) end)
     later(5,function()
       checkCooldowns()
       if GuildCraftDB.settings.syncOnLogin then
-        announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2'); queueSummaries(); queueCooldowns()
+        announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2'); queueSummaries(); queueCatalogSummaries(); queueCooldowns()
       end
     end)
   elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
@@ -1907,8 +1973,10 @@ frame:SetScript('OnEvent',function(_,event,...)
     requestUpdate()
   elseif event=='CHAT_MSG_ADDON' then
     local prefix,msg,channel,sender=...
-    if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg=='V|'..key() and not isSecret(sender) then
-      learnOwnName(sender); requestUpdate(); return
+    if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg:sub(1,2)=='V|' then
+      local who,version=msg:match('^V|([^|]+)|?(.*)$')
+      if who==key() and not isSecret(sender) then learnOwnName(sender); requestUpdate(); return end
+      if who and senderMatches(sender,who) then addonVersions[nameId(who)]=version end
     end
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       -- Count by the name in the payload when the client hides the sender.
@@ -1920,7 +1988,7 @@ frame:SetScript('OnEvent',function(_,event,...)
       if prefix==RECIPE_PREFIX then
         if type(msg)=='string' and msg:sub(1,2)=='R|' and senderMatches(sender,msg:match('^R|([^|]+)')) then
           -- v2 requesters compare summaries and pull what changed; older clients need full lists.
-          if msg:find('|2',3,true) then queueSummaries() else shareAllRecipes() end
+          if msg:find('|2',3,true) then queueSummaries(); queueCatalogSummaries() else shareAllRecipes() end
           queueCooldowns()
         else receiveRecipe(msg,sender) end
       end
@@ -1933,8 +2001,14 @@ frame:SetScript('OnUpdate',function(_,elapsed)
     if lastRecipeSend>=0.25 then
       lastRecipeSend=0
       if IsInGuild and IsInGuild() then
-        if recipeSend(recipeQueue[1]) then table.remove(recipeQueue,1)
-        else lastRecipeSend=-1 end -- throttled: wait a bit longer, then retry the same message
+        if recipeSend(recipeQueue[1]) then
+          table.remove(recipeQueue,1); sendFailures=0
+        else
+          -- Throttled messages go through on a later try; one that keeps failing is dropped so it can't stall the queue.
+          sendFailures=sendFailures+1
+          if sendFailures>=5 then table.remove(recipeQueue,1); sendFailures=0; droppedMessages=droppedMessages+1 end
+          lastRecipeSend=-1
+        end
       end
     end
   end
