@@ -99,12 +99,31 @@ local function playerName()
 end
 local function key() return (playerName() or 'Unknown')..'-'..realm() end
 local function now() return (time and time()) or 0 end
-local function shortName(name) return type(name)=='string' and not isSecret(name) and name:match('^[^-]+') or nil end
+-- APIs format realms differently ("Living Flame" vs "LivingFlame", or none for your own realm),
+-- so compare characters by a normalized name-realm id instead of the bare name.
+local function splitName(name)
+  if type(name)~='string' or isSecret(name) then return nil end
+  local character,server=name:match('^([^-]+)%-(.+)$')
+  if not character then character,server=name,realm() end
+  return character,server
+end
+local function normalizeRealm(server) return (server or ''):gsub('[%s%-]',''):lower() end
+local function nameId(name)
+  local character,server=splitName(name)
+  return character and (character:lower()..'-'..normalizeRealm(server)) or nil
+end
+-- "Bob" for your own realm, "Bob-Faerlina" for anyone from another realm.
+local function displayName(name)
+  local character,server=splitName(name)
+  if not character then return name end
+  if normalizeRealm(server)==normalizeRealm(realm()) then return character end
+  return character..'-'..server:gsub('%s','')
+end
 -- True when the addon-message sender is the character named in the payload, or the client hides the sender.
 local function senderMatches(sender,who)
   if isSecret(sender) then return true end
-  local name=shortName(sender)
-  return name~=nil and name==shortName(who)
+  local id=nameId(sender)
+  return id~=nil and id==nameId(who)
 end
 local function scan()
   local list,seen={},{}
@@ -592,15 +611,15 @@ local function refreshRoster()
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
   for i=1,GetNumGuildMembers() do
     local name,_,_,_,_,_,_,_,online=GetGuildRosterInfo(i)
-    local short=shortName(name)
-    if short then
-      guildMembers[short]=true
+    local id=nameId(name)
+    if id then
+      guildMembers[id]=true
       if online then
-        guildOnline[short]=true; guildLastSeen[short]=0
+        guildOnline[id]=true; guildLastSeen[id]=0
       elseif GetGuildRosterLastOnline then
         local years,months,days,hours=GetGuildRosterLastOnline(i)
         if tonumber(years) then
-          guildLastSeen[short]=((((years*365)+(months or 0)*30+(days or 0))*24)+(hours or 0))*3600
+          guildLastSeen[id]=((((years*365)+(months or 0)*30+(days or 0))*24)+(hours or 0))*3600
         end
       end
     end
@@ -646,7 +665,7 @@ local function migrateLegacy()
   if inGuild and next(guildMembers)==nil then return end
   local moved=0
   for k,v in pairs(legacy) do
-    if k==key() or (inGuild and guildMembers[shortName(k)]) then
+    if k==key() or (inGuild and guildMembers[nameId(k)]) then
       if not db[k] then db[k]=v; moved=moved+1 end
       legacy[k]=nil
     end
@@ -659,18 +678,18 @@ local function requestRoster()
   elseif GuildRoster then GuildRoster() end
 end
 local function activeUsers()
-  local me=playerName() or 'You'
-  local list={me}
+  local me=nameId(key())
+  local list={playerName() or 'You'}
   local rosterKnown=next(guildOnline)~=nil
-  for name in pairs(activeSeen) do
-    if name~=me and (not rosterKnown or guildOnline[name]) then list[#list+1]=name end
+  for id,name in pairs(activeSeen) do
+    if id~=me and (not rosterKnown or guildOnline[id]) then list[#list+1]=name end
   end
   table.sort(list)
   return list
 end
-local function markSeen(sender)
-  local name=shortName(sender)
-  if name and not activeSeen[name] then activeSeen[name]=true; if refreshMinimap then refreshMinimap() end end
+local function markSeen(who)
+  local id=nameId(who)
+  if id and not activeSeen[id] then activeSeen[id]=displayName(who); if refreshMinimap then refreshMinimap() end end
 end
 
 -- Display helpers
@@ -692,7 +711,7 @@ local function durationText(seconds)
 end
 local function availabilityText(c)
   if c.online then return '|cff40ff40Online|r' end
-  local ago=guildLastSeen[c.character]
+  local ago=guildLastSeen[c.id]
   if ago then return '|cffa0a0a0Seen '..(ago<3600 and 'within 1h' or agoText(ago))..'|r' end
   return '|cff808080Offline|r'
 end
@@ -840,7 +859,7 @@ local function buildIndex()
   local knownBy={}
   for who,record in pairs(db or {}) do
     if type(record)=='table' and type(record.recipes)=='table' then
-      local character=who:match('^(.-)%-') or who
+      local character=displayName(who)
       for prof,list in pairs(record.recipes) do
         local listed={}
         for _,name in ipairs(type(list)=='table' and list or {}) do
@@ -924,9 +943,10 @@ local function gather(prof)
       local known=record.recipes and record.recipes[prof]
       if type(known)~='table' then known=nil end
       if skill or (known and #known>0) then
-        local character=who:match('^(.-)%-') or who
+        local character=displayName(who)
         local c={key=who,character=character,rank=skill and tonumber(skill.rank) or 0,max=skill and tonumber(skill.max) or 0,updated=record.updated,recipeCount=known and #known or 0,isMe=(who==me)}
-        c.online=c.isMe or guildOnline[character]==true
+        c.id=nameId(who)
+        c.online=c.isMe or guildOnline[c.id]==true
         crafters[#crafters+1]=c
         local listed={}
         for _,name in ipairs(known or {}) do
@@ -1009,12 +1029,12 @@ local function gatherCooldowns(prof,term)
   local me=key()
   for who,record in pairs(db or {}) do
     if type(record)=='table' and type(record.cooldowns)=='table' then
-      local character=who:match('^(.-)%-') or who
+      local character=displayName(who)
       for name,cd in pairs(record.cooldowns) do
         if type(cd)=='table' and (not prof or cd.prof==prof)
           and (term=='' or found(character,term) or found(name,term) or found(cd.prof,term)) then
           local entry={character=character,isMe=(who==me),name=name,prof=cd.prof,readyAt=cd.readyAt or 0,updated=cd.updated}
-          entry.online=entry.isMe or guildOnline[character]==true
+          entry.online=entry.isMe or guildOnline[nameId(who)]==true
           entry.ready=entry.readyAt<=now()
           if entry.ready then ready=ready+1 end
           list[#list+1]=entry
@@ -1856,12 +1876,12 @@ frame:SetScript('OnEvent',function(_,event,...)
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender
-      if senderMatches(sender,who) and shortName(who)~=playerName() then markSeen(who) end
+      if senderMatches(sender,who) and nameId(who)~=nameId(key()) then markSeen(who) end
     end
     if channel=='GUILD' then
       if prefix==PREFIX then parseMessage(msg,sender); requestUpdate() end
       if prefix==RECIPE_PREFIX then
-        if type(msg)=='string' and msg:sub(1,2)=='R|' and senderMatches(sender,msg:sub(3)) then
+        if type(msg)=='string' and msg:sub(1,2)=='R|' and senderMatches(sender,msg:match('^R|([^|]+)')) then
           -- v2 requesters compare summaries and pull what changed; older clients need full lists.
           if msg:find('|2',3,true) then queueSummaries() else shareAllRecipes() end
           queueCooldowns()
