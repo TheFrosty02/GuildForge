@@ -39,7 +39,7 @@ Collect the recipes you plan to make and GuildCraft combines them into one list 
 - **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
 
 ### Settings
-Click the gear next to **Sync Guild** to toggle the minimap button, item tooltips, syncing on login and quiet mode, adjust the window scale, or re-share all of your recipes.
+Click the gear next to **Sync Guild** to toggle the minimap button, item tooltips, syncing on login and quiet mode, adjust the window scale, or re-share all of your recipes. The guild master also gets a **Reset guild data** button that clears everyone's stored guild data and has each member re-share their own professions; members who were offline pick up the reset the next time they and the guild master are online together.
 
 ![Settings panel](docs/screenshots/settings.png)
 
@@ -68,6 +68,7 @@ Your guildmates need GuildCraft too — the more people running it, the more com
 | `/guildcraft refresh` | Rescan your own professions |
 | `/guildcraft settings` | Open the settings panel |
 | `/guildcraft minimap` | Show or hide the minimap button |
+| `/guildcraft reset` | Guild master only: clear the guild's GuildCraft data for everyone and rebuild it |
 | `/guildcraft who` | List guildmates online with GuildCraft and their versions |
 | `/guildcraft status` | Print sync counters |
 

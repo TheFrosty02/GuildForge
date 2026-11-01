@@ -17,7 +17,7 @@ local lastRecipeSend = 0
 local sendFailures, droppedMessages = 0, 0
 local addonVersions = {} -- nameId -> GuildCraft version heard this session ('' = older than 0.13)
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
-local activeSeen, guildOnline, guildLastSeen, guildMembers = {}, {}, {}, {}
+local activeSeen, guildOnline, guildLastSeen, guildMembers, guildRanks = {}, {}, {}, {}, {}
 -- Member data is stored per guild. Until the guild name loads, messages land here and merge in later.
 local tempMembers, currentGuild = {}, nil
 local fullQueuedAt, pullRequestedAt = {}, {}
@@ -78,6 +78,7 @@ local DOT_TEXTURE='Interface\\CharacterFrame\\TempPortraitAlphaMask'
 local BACKDROP_TEMPLATE=BackdropTemplateMixin and 'BackdropTemplate' or nil
 local CONTENT_W=646
 local update, refreshMinimap, selectTab
+local startReset, onResetMessage
 local function releaseSearchFocus()
   if searchBox and searchBox:HasFocus() then searchBox:ClearFocus() end
 end
@@ -241,6 +242,7 @@ local function parseMessage(message,sender)
   if not action or not who or who==key() then return end
   if not senderMatches(sender,who) then return end
   if action=='Q' then announce(true); return end
+  if action=='X' then onResetMessage(who,tonumber(extra)); return end
   if action=='B' then pending[who]={professions={},updated=now()}; return end
   if action=='P' then
     local record=pending[who]
@@ -689,13 +691,14 @@ end
 
 -- Guild roster: who is online, when offline members were last seen, and who runs GuildCraft.
 local function refreshRoster()
-  wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers)
+  wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers); wipe(guildRanks)
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
   for i=1,GetNumGuildMembers() do
-    local name,_,_,_,_,_,_,_,online=GetGuildRosterInfo(i)
+    local name,_,rankIndex,_,_,_,_,_,online=GetGuildRosterInfo(i)
     local id=nameId(name)
     if id then
       guildMembers[id]=true
+      guildRanks[id]=tonumber(rankIndex)
       if online then
         guildOnline[id]=true; guildLastSeen[id]=0
       elseif GetGuildRosterLastOnline then
@@ -754,6 +757,15 @@ local function migrateLegacy()
   end
   if next(legacy)==nil then GuildCraftDB.members=nil end
   if moved>0 then requestUpdate() end
+end
+local function isGuildMaster()
+  if not (IsInGuild and IsInGuild()) then return false end
+  if IsGuildLeader then
+    local leader=IsGuildLeader()
+    if leader~=nil then return leader and true or false end
+  end
+  local _,_,rankIndex=GetGuildInfo('player')
+  return rankIndex==0
 end
 local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
@@ -1720,11 +1732,18 @@ local function makeSettingsPanel(f,inset)
   push:SetScript('OnClick',doPush)
   local pushHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); pushHint:SetPoint('LEFT',push,'RIGHT',10,0)
   pushHint:SetText('Normal syncs only send lists that changed; use this if someone is missing yours.')
+  y=y-36
+  local reset=smallButton(panel,'Reset guild data',180); reset:SetPoint('TOPLEFT',22,y)
+  reset:SetScript('OnClick',function() StaticPopup_Show('GUILDCRAFT_RESET') end)
+  local resetHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); resetHint:SetPoint('LEFT',reset,'RIGHT',10,0)
+  resetHint:SetText('Guild master only: clears everyone\'s guild data and has each member re-share.')
   local done=smallButton(panel,'Done',90); done:SetPoint('BOTTOMRIGHT',-16,14)
   done:SetScript('OnClick',function() panel:Hide() end)
   panel:SetScript('OnShow',function()
     for _,c in ipairs(checks) do c:SetChecked(c.get()) end
     showScale()
+    local gm=isGuildMaster()
+    reset:SetShown(gm); resetHint:SetShown(gm)
   end)
   return panel
 end
@@ -1908,6 +1927,8 @@ SlashCmdList['GUILDCRAFT']=function(message)
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
     log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d',recipeReceived,recipeSent,#recipeQueue,droppedMessages),true)
+  elseif message=='reset' then
+    if isGuildMaster() then StaticPopup_Show('GUILDCRAFT_RESET') else log('Only the guild master can reset GuildCraft data.',true) end
   elseif message=='who' then
     local users=activeUsers(true)
     log(#users..' online with GuildCraft:',true)
@@ -1934,6 +1955,57 @@ end
 local function later(seconds,fn)
   if C_Timer and C_Timer.After then C_Timer.After(seconds,fn) else fn() end
 end
+
+-- Guild master reset: X|gm|resetAt. Receivers verify the sender is rank 0 in their own roster,
+-- clear every guildmate's data except their own, then re-share so the guild rebuilds from fresh scans.
+local pendingReset
+local function guildRecord()
+  return currentGuild and GuildCraftDB.guilds[currentGuild]
+end
+local function applyReset(fromId,resetAt)
+  local guild=guildRecord()
+  if not guild then return end
+  guild.resetFrom=guild.resetFrom or {}
+  if (guild.resetFrom[fromId] or 0)>=resetAt then return end
+  guild.resetFrom[fromId]=resetAt
+  local me=key()
+  local mine=db[me]
+  wipe(db)
+  if mine then db[me]=mine end
+  wipe(recipePending); wipe(pullRequestedAt); wipe(selectedCrafter)
+  log('The guild master reset GuildCraft data. Re-sharing your professions and recipes.',true)
+  requestUpdate()
+  -- Stagger re-shares so the whole guild doesn't send at the same moment.
+  later(2+math.random()*10,function() announce(true); doPush() end)
+end
+onResetMessage=function(who,resetAt)
+  if not resetAt or not currentGuild then return end
+  if next(guildRanks)==nil then
+    pendingReset={who=who,resetAt=resetAt}; requestRoster(); return
+  end
+  local id=nameId(who)
+  if guildRanks[id]~=0 then return end
+  applyReset(id,resetAt)
+end
+local function resendReset()
+  local guild=guildRecord()
+  local me=nameId(key())
+  local resetAt=guild and guild.resetFrom and guild.resetFrom[me]
+  if resetAt and isGuildMaster() then addonSend('X|'..key()..'|'..resetAt) end
+end
+startReset=function()
+  if not isGuildMaster() then log('Only the guild master can reset GuildCraft data.',true); return end
+  if not guildRecord() then return end
+  local resetAt=now()
+  applyReset(nameId(key()),resetAt)
+  addonSend('X|'..key()..'|'..resetAt)
+end
+StaticPopupDialogs['GUILDCRAFT_RESET']={
+  text='Reset GuildCraft data for the whole guild?\n\nEveryone online keeps only their own professions and re-shares them. Members who are offline reset the next time you are both online.',
+  button1=YES, button2=NO,
+  OnAccept=function() startReset() end,
+  timeout=0, whileDead=true, hideOnEscape=true, showAlert=true,
+}
 frame:SetScript('OnEvent',function(_,event,...)
   if event=='PLAYER_LOGIN' then
     initDB(); selectGuild(); save(); migrateLegacy()
@@ -1950,6 +2022,7 @@ frame:SetScript('OnEvent',function(_,event,...)
       if GuildCraftDB.settings.syncOnLogin then
         announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2'); queueSummaries(); queueCatalogSummaries(); queueCooldowns()
       end
+      resendReset()
     end)
   elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
     if not scanScheduled then scanScheduled=true; later(0.3,scanRecipes) end
@@ -1969,6 +2042,10 @@ frame:SetScript('OnEvent',function(_,event,...)
     refreshRoster()
     if selectGuild() then save() end
     migrateLegacy(); refreshMinimap(); requestUpdate()
+    if pendingReset and next(guildRanks) then
+      local p=pendingReset; pendingReset=nil
+      onResetMessage(p.who,p.resetAt)
+    end
   elseif event=='BAG_UPDATE' or event=='GET_ITEM_INFO_RECEIVED' or event=='ITEM_DATA_LOAD_RESULT' then
     requestUpdate()
   elseif event=='CHAT_MSG_ADDON' then
@@ -1989,6 +2066,7 @@ frame:SetScript('OnEvent',function(_,event,...)
         if type(msg)=='string' and msg:sub(1,2)=='R|' and senderMatches(sender,msg:match('^R|([^|]+)')) then
           -- v2 requesters compare summaries and pull what changed; older clients need full lists.
           if msg:find('|2',3,true) then queueSummaries(); queueCatalogSummaries() else shareAllRecipes() end
+          resendReset()
           queueCooldowns()
         else receiveRecipe(msg,sender) end
       end
