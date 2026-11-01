@@ -69,7 +69,8 @@ local function knowsSpell(id)
   return IsSpellKnown and IsSpellKnown(id)
 end
 local QUESTION_ICON='Interface\\Icons\\INV_Misc_QuestionMark'
-local DOT_TEXTURE='Interface\\Minimap\\UI-Minimap-Background'
+-- A white circle (the portrait mask) so vertex colors show true; tinting a dark texture stays dark.
+local DOT_TEXTURE='Interface\\CharacterFrame\\TempPortraitAlphaMask'
 local BACKDROP_TEMPLATE=BackdropTemplateMixin and 'BackdropTemplate' or nil
 local CONTENT_W=646
 local update, refreshMinimap, selectTab
@@ -1694,7 +1695,7 @@ local function makeMinimapButton()
   local badge=CreateFrame('Frame',nil,b)
   badge:SetSize(15,15); badge:SetPoint('CENTER',b,'TOPLEFT',28,-26); badge:SetFrameLevel(b:GetFrameLevel()+2)
   local badgeBg=badge:CreateTexture(nil,'ARTWORK')
-  badgeBg:SetTexture('Interface\\Minimap\\UI-Minimap-Background'); badgeBg:SetAllPoints(); badgeBg:SetVertexColor(.75,.08,.05)
+  badgeBg:SetTexture(DOT_TEXTURE); badgeBg:SetAllPoints(); badgeBg:SetVertexColor(.75,.08,.05)
   b.count=badge:CreateFontString(nil,'OVERLAY')
   b.count:SetFont('Fonts\\FRIZQT__.TTF',8,'OUTLINE'); b.count:SetPoint('CENTER',0,0); b.count:SetTextColor(1,1,1)
   b:SetScript('OnClick',function(_,mouse) if mouse=='RightButton' then doSync() else toggle() end end)
