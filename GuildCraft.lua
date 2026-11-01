@@ -228,7 +228,9 @@ local function recipeSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false end
-  fn(RECIPE_PREFIX,payload,'GUILD')
+  local result=fn(RECIPE_PREFIX,payload,'GUILD')
+  -- Newer clients return false or a non-zero result code when the message was throttled and not sent.
+  if result==false or (type(result)=='number' and result~=0) then return false end
   recipeSent=recipeSent+1
   return true
 end
@@ -332,11 +334,14 @@ local function receiveRecipe(msg,sender)
   if action=='B' then
     local expected=tonumber(extra)
     if not expected or expected<0 or expected>500 then return end
-    recipePending[pendingKey]={items={},expected=expected}
+    recipePending[pendingKey]={items={},seen={},expected=expected}
   elseif action=='I' then
     local pending=recipePending[pendingKey]
-    if pending and extra and #pending.items<pending.expected then
-      pending.items[#pending.items+1]=clean(extra)
+    local item=extra and clean(extra)
+    -- A dropped E/B can splice two broadcasts together; repeats mean the list is unreliable, so skip them.
+    if pending and item and not pending.seen[item] and #pending.items<pending.expected then
+      pending.seen[item]=true
+      pending.items[#pending.items+1]=item
     end
   elseif action=='E' then
     local pending=recipePending[pendingKey]
@@ -781,10 +786,14 @@ local function buildIndex()
     if type(record)=='table' and type(record.recipes)=='table' then
       local character=who:match('^(.-)%-') or who
       for prof,list in pairs(record.recipes) do
+        local listed={}
         for _,name in ipairs(type(list)=='table' and list or {}) do
-          local k=prof..'|'..name
-          knownBy[k]=knownBy[k] or {}
-          table.insert(knownBy[k],character)
+          if not listed[name] then
+            listed[name]=true
+            local k=prof..'|'..name
+            knownBy[k]=knownBy[k] or {}
+            table.insert(knownBy[k],character)
+          end
         end
       end
     end
@@ -863,8 +872,10 @@ local function gather(prof)
         local c={key=who,character=character,rank=skill and tonumber(skill.rank) or 0,max=skill and tonumber(skill.max) or 0,updated=record.updated,recipeCount=known and #known or 0,isMe=(who==me)}
         c.online=c.isMe or guildOnline[character]==true
         crafters[#crafters+1]=c
+        local listed={}
         for _,name in ipairs(known or {}) do
-          if type(name)=='string' then
+          if type(name)=='string' and not listed[name] then
+            listed[name]=true
             local r=byName[name]
             if not r then r={name=name,crafters={}}; byName[name]=r; recipes[#recipes+1]=r end
             r.crafters[#r.crafters+1]=c
@@ -1805,7 +1816,10 @@ frame:SetScript('OnUpdate',function(_,elapsed)
     lastRecipeSend=lastRecipeSend+elapsed
     if lastRecipeSend>=0.25 then
       lastRecipeSend=0
-      if IsInGuild and IsInGuild() then recipeSend(table.remove(recipeQueue,1)) end
+      if IsInGuild and IsInGuild() then
+        if recipeSend(recipeQueue[1]) then table.remove(recipeQueue,1)
+        else lastRecipeSend=-1 end -- throttled: wait a bit longer, then retry the same message
+      end
     end
   end
   -- Coalesce bursts of sync messages and bag events into one redraw.
