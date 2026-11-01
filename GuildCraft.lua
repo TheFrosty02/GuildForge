@@ -530,26 +530,30 @@ local function scanModernTradeSkill()
   commitScan(prof,recipes,true)
 end
 -- Trainers list recipes nobody may know yet; catalogue them for the "not known in guild" list.
+local RANK_UPGRADES={Apprentice=true,Journeyman=true,Expert=true,Artisan=true,Master=true}
 local function scanTrainer()
-  if not (GetNumTrainerServices and GetTrainerServiceInfo and GetTrainerServiceSkillLine) then return end
+  if not (GetNumTrainerServices and GetTrainerServiceInfo) then return end
   local added=0
   for i=1,GetNumTrainerServices() do
-    local name,_,category=GetTrainerServiceInfo(i)
-    local prof=GetTrainerServiceSkillLine(i)
-    local count=GetTrainerServiceNumReagents and GetTrainerServiceNumReagents(i) or 0
-    -- Rank upgrades (Journeyman, Expert...) have no reagents, which filters them out.
-    if name and category~='header' and craftable[prof] and count>0 then
+    local name,subText,category=GetTrainerServiceInfo(i)
+    -- Classic trainers may not report a skill line; the "Requires: Enchanting (10)" skill names it too.
+    local prof=GetTrainerServiceSkillLine and GetTrainerServiceSkillLine(i)
+    local reqSkill,req
+    if GetTrainerServiceSkillReq then reqSkill,req=GetTrainerServiceSkillReq(i) end
+    if not craftable[prof] then prof=reqSkill end
+    -- Rank upgrades are listed under the profession's own name with a rank as the subtext.
+    local isRankUpgrade=name==prof or RANK_UPGRADES[subText or '']
+    if name and category~='header' and craftable[prof] and not isRankUpgrade then
       local recipe=clean(name)
       recipeInfo[prof]=recipeInfo[prof] or {}
       if not recipeInfo[prof][recipe] then
+        -- Classic Era trainers don't list reagents; they fill in when a crafter shares the recipe.
         local reagents={}
-        for r=1,count do
+        for r=1,(GetTrainerServiceNumReagents and GetTrainerServiceNumReagents(i) or 0) do
           local reagentName,_,n
           if GetTrainerServiceReagentInfo then reagentName,_,n=GetTrainerServiceReagentInfo(i,r) end
           if reagentName then reagents[#reagents+1]={name=reagentName,n=tonumber(n) or 1} end
         end
-        local req
-        if GetTrainerServiceSkillReq then req=select(2,GetTrainerServiceSkillReq(i)) end
         recipeInfo[prof][recipe]={link=linkCode(GetTrainerServiceItemLink and GetTrainerServiceItemLink(i)),icon=GetTrainerServiceIcon and GetTrainerServiceIcon(i),reagents=reagents,remote=true,source='Trainer',req=tonumber(req)}
         added=added+1
       end
