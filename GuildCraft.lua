@@ -91,26 +91,41 @@ local function log(s,always)
 end
 local function realm() return (GetRealmName and GetRealmName()) or 'Unknown' end
 local cachedPlayer
+-- WoW: Forever adds surnames, and UnitName may not match the name other players see on our messages.
+-- learnOwnName() records the name the server puts on our own messages, keyed by UnitName.
 local function playerName()
   if cachedPlayer then return cachedPlayer end
   local name=UnitName('player')
-  if name and not isSecret(name) then cachedPlayer=name end
+  if name and not isSecret(name) then
+    local learned=GuildCraftDB and GuildCraftDB.knownAs and GuildCraftDB.knownAs[name..'-'..realm()]
+    cachedPlayer=learned or name
+  end
   return cachedPlayer
 end
 local function key() return (playerName() or 'Unknown')..'-'..realm() end
 local function now() return (time and time()) or 0 end
 -- APIs format realms differently ("Living Flame" vs "LivingFlame", or none for your own realm),
 -- so compare characters by a normalized name-realm id instead of the bare name.
+local function normalizeRealm(server) return (server or ''):gsub('[%s%-]',''):lower() end
 local function splitName(name)
   if type(name)~='string' or isSecret(name) then return nil end
+  -- Strip a suffix naming our own realm first, so hyphens in surnames or realm names don't split wrongly.
+  local own=normalizeRealm(realm())
+  local start=1
+  while true do
+    local dash=name:find('-',start,true)
+    if not dash then break end
+    if normalizeRealm(name:sub(dash+1))==own then return name:sub(1,dash-1),realm() end
+    start=dash+1
+  end
   local character,server=name:match('^([^-]+)%-(.+)$')
-  if not character then character,server=name,realm() end
+  if not character then return name,realm() end
   return character,server
 end
-local function normalizeRealm(server) return (server or ''):gsub('[%s%-]',''):lower() end
 local function nameId(name)
   local character,server=splitName(name)
-  return character and (character:lower()..'-'..normalizeRealm(server)) or nil
+  if not character then return nil end
+  return character:gsub('%s',''):lower()..'-'..normalizeRealm(server)
 end
 -- "Bob" for your own realm, "Bob-Faerlina" for anyone from another realm.
 local function displayName(name)
@@ -118,6 +133,23 @@ local function displayName(name)
   if not character then return name end
   if normalizeRealm(server)==normalizeRealm(realm()) then return character end
   return character..'-'..server:gsub('%s','')
+end
+-- Our own guild addon messages echo back with the sender name the server uses for us.
+local function learnOwnName(sender)
+  local character=splitName(sender)
+  local base=UnitName('player')
+  if not character or character==cachedPlayer or not base or isSecret(base) then return end
+  local oldKey=key()
+  cachedPlayer=character
+  local newKey=key()
+  if GuildCraftDB then
+    GuildCraftDB.knownAs=GuildCraftDB.knownAs or {}
+    GuildCraftDB.knownAs[base..'-'..realm()]=character
+  end
+  if db and db[oldKey] then
+    if not db[newKey] then db[newKey]=db[oldKey] end
+    db[oldKey]=nil
+  end
 end
 -- True when the addon-message sender is the character named in the payload, or the client hides the sender.
 local function senderMatches(sender,who)
@@ -1845,6 +1877,8 @@ frame:SetScript('OnEvent',function(_,event,...)
     hookTooltips()
     requestRoster()
     log('v'..VERSION..' loaded. Click the GC minimap button or type /guildcraft to open.')
+    -- Probe first so our name matches what guildmates see before the real sync goes out.
+    later(2,function() addonSend('V|'..key()) end)
     later(5,function()
       checkCooldowns()
       if GuildCraftDB.settings.syncOnLogin then
@@ -1873,6 +1907,9 @@ frame:SetScript('OnEvent',function(_,event,...)
     requestUpdate()
   elseif event=='CHAT_MSG_ADDON' then
     local prefix,msg,channel,sender=...
+    if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg=='V|'..key() and not isSecret(sender) then
+      learnOwnName(sender); requestUpdate(); return
+    end
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender
