@@ -1492,8 +1492,13 @@ end
 local function makeSettingsPanel(f,inset)
   local panel=CreateFrame('Frame',nil,f,BACKDROP_TEMPLATE)
   panel:SetPoint('TOPLEFT',inset,'TOPLEFT'); panel:SetPoint('BOTTOMRIGHT',inset,'BOTTOMRIGHT')
-  panel:SetFrameLevel(inset:GetFrameLevel()+20); skin(panel,.97)
+  -- A higher strata keeps list rows from drawing through the panel when the window is raised or rows are rebuilt.
+  panel:SetFrameStrata('FULLSCREEN_DIALOG'); skin(panel,1)
+  local backing=panel:CreateTexture(nil,'BACKGROUND',nil,-8)
+  backing:SetPoint('TOPLEFT',3,-3); backing:SetPoint('BOTTOMRIGHT',-3,3); backing:SetColorTexture(.07,.05,.035,1)
   panel:EnableMouse(true); panel:Hide()
+  -- Swallow the wheel so the list underneath doesn't scroll while settings are open.
+  panel:EnableMouseWheel(true); panel:SetScript('OnMouseWheel',function() end)
   local title=panel:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',18,-16); title:SetText('Settings')
   local y=-50
   local checks={}
