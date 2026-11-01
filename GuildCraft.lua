@@ -18,6 +18,7 @@ local sendFailures, droppedMessages = 0, 0
 local addonVersions = {} -- nameId -> GuildCraft version heard this session ('' = older than 0.13)
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
 local activeSeen, guildOnline, guildLastSeen, guildMembers, guildRanks = {}, {}, {}, {}, {}
+local rosterHasOffline = false
 -- Member data is stored per guild. Until the guild name loads, messages land here and merge in later.
 local tempMembers, currentGuild = {}, nil
 local fullQueuedAt, pullRequestedAt = {}, {}
@@ -691,7 +692,7 @@ end
 
 -- Guild roster: who is online, when offline members were last seen, and who runs GuildCraft.
 local function refreshRoster()
-  wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers); wipe(guildRanks)
+  wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers); wipe(guildRanks); rosterHasOffline=false
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
   for i=1,GetNumGuildMembers() do
     local name,_,rankIndex,_,_,_,_,_,online=GetGuildRosterInfo(i)
@@ -701,7 +702,10 @@ local function refreshRoster()
       guildRanks[id]=tonumber(rankIndex)
       if online then
         guildOnline[id]=true; guildLastSeen[id]=0
-      elseif GetGuildRosterLastOnline then
+      else
+        rosterHasOffline=true
+      end
+      if not online and GetGuildRosterLastOnline then
         local years,months,days,hours=GetGuildRosterLastOnline(i)
         if tonumber(years) then
           guildLastSeen[id]=((((years*365)+(months or 0)*30+(days or 0))*24)+(hours or 0))*3600
@@ -766,6 +770,18 @@ local function isGuildMaster()
   end
   local _,_,rankIndex=GetGuildInfo('player')
   return rankIndex==0
+end
+-- Saved data keeps people who have since left the guild; only show current roster members.
+-- The roster only filters when it's known to include offline members ("Show Offline" on, or offline entries seen).
+local function currentMembers()
+  local complete=rosterHasOffline or (GetGuildRosterShowOffline and GetGuildRosterShowOffline())
+  if not db or next(guildMembers)==nil or not complete then return db or {} end
+  local me=key()
+  local list={}
+  for who,record in pairs(db) do
+    if who==me or guildMembers[nameId(who)] then list[who]=record end
+  end
+  return list
 end
 local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
@@ -961,7 +977,7 @@ end
 local function buildIndex()
   recipeIndex={craftedBy={},usedIn={}}
   local knownBy={}
-  for who,record in pairs(db or {}) do
+  for who,record in pairs(currentMembers()) do
     if type(record)=='table' and type(record.recipes)=='table' then
       local character=displayName(who)
       for prof,list in pairs(record.recipes) do
@@ -1040,7 +1056,7 @@ end
 local function gather(prof)
   local crafters,recipes,byName={},{},{}
   local me=key()
-  for who,record in pairs(db or {}) do
+  for who,record in pairs(currentMembers()) do
     if type(record)=='table' then
       local skill
       for _,p in ipairs(record.professions or {}) do if p.name==prof then skill=p; break end end
@@ -1077,7 +1093,7 @@ local function gather(prof)
   return crafters,recipes,byName
 end
 local function hasProfession(prof)
-  for _,record in pairs(db or {}) do
+  for _,record in pairs(currentMembers()) do
     if type(record)=='table' then
       for _,p in ipairs(record.professions or {}) do if p.name==prof then return true end end
     end
@@ -1131,7 +1147,7 @@ end
 local function gatherCooldowns(prof,term)
   local list,ready={},0
   local me=key()
-  for who,record in pairs(db or {}) do
+  for who,record in pairs(currentMembers()) do
     if type(record)=='table' and type(record.cooldowns)=='table' then
       local character=displayName(who)
       for name,cd in pairs(record.cooldowns) do
