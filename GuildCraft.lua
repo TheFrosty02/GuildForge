@@ -15,7 +15,9 @@ local recipeQueue, recipePending = {}, {}
 local recipeSent, recipeReceived = 0, 0
 local lastRecipeSend = 0
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
-local activeSeen, guildOnline, guildLastSeen = {}, {}, {}
+local activeSeen, guildOnline, guildLastSeen, guildMembers = {}, {}, {}, {}
+-- Member data is stored per guild. Until the guild name loads, messages land here and merge in later.
+local tempMembers, currentGuild = {}, nil
 local fullQueuedAt, pullRequestedAt = {}, {}
 local recipeIndex, indexDirty = nil, true
 local professions={"Alchemy","Blacksmithing","Enchanting","Engineering","Leatherworking","Tailoring","Cooking","First Aid","Fishing","Herbalism","Mining","Skinning"}
@@ -131,7 +133,7 @@ local function scan()
 end
 local function initDB()
   GuildCraftDB=GuildCraftDB or {}
-  GuildCraftDB.members=GuildCraftDB.members or {}
+  GuildCraftDB.guilds=GuildCraftDB.guilds or {}
   -- Recipe details (crafted item + reagents) are shared by name, independent of who knows them.
   GuildCraftDB.recipeInfo=GuildCraftDB.recipeInfo or {}
   GuildCraftDB.minimap=GuildCraftDB.minimap or {angle=200,hide=false}
@@ -143,13 +145,13 @@ local function initDB()
   if s.syncOnLogin==nil then s.syncOnLogin=true end
   if s.quiet==nil then s.quiet=false end
   if s.tooltips==nil then s.tooltips=true end
-  db=GuildCraftDB.members
+  db=tempMembers
   recipeInfo=GuildCraftDB.recipeInfo
   selectedTab=professionIcons[GuildCraftDB.ui.tab or ''] and GuildCraftDB.ui.tab or 'All'
 end
 local function save()
   if not db then initDB() end
-  if not playerName() then return end
+  if not playerName() or db==tempMembers then return end
   local name=key()
   local previous=db[name] or {}
   db[name]={professions=scan(),updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {}}
@@ -168,6 +170,7 @@ local function announce(force)
   if not force and t-lastBroadcast<15 then return end
   save()
   local rec=db[key()]
+  if not rec then return end
   local entries={}
   for _,p in ipairs(rec.professions) do
     entries[#entries+1]=p.name..':'..p.rank..':'..p.max
@@ -585,12 +588,13 @@ end
 
 -- Guild roster: who is online, when offline members were last seen, and who runs GuildCraft.
 local function refreshRoster()
-  wipe(guildOnline); wipe(guildLastSeen)
+  wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers)
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
   for i=1,GetNumGuildMembers() do
     local name,_,_,_,_,_,_,_,online=GetGuildRosterInfo(i)
     local short=shortName(name)
     if short then
+      guildMembers[short]=true
       if online then
         guildOnline[short]=true; guildLastSeen[short]=0
       elseif GetGuildRosterLastOnline then
@@ -601,6 +605,54 @@ local function refreshRoster()
       end
     end
   end
+end
+local function guildBucketKey()
+  if not (IsInGuild and IsInGuild()) then return 'No guild - '..realm() end
+  local name=GetGuildInfo and GetGuildInfo('player')
+  if not name or isSecret(name) then return nil end
+  return name..' - '..realm()
+end
+-- Points db at the current guild's members; returns true when the guild changed.
+local function selectGuild()
+  if not GuildCraftDB or not playerName() then return false end
+  local bucket=guildBucketKey()
+  if not bucket or bucket==currentGuild then return false end
+  GuildCraftDB.guilds[bucket]=GuildCraftDB.guilds[bucket] or {members={}}
+  local members=GuildCraftDB.guilds[bucket].members
+  for k,v in pairs(tempMembers) do if not members[k] then members[k]=v end end
+  wipe(tempMembers)
+  -- Bring your own recipes along from the old shared list or from a guild this character left.
+  local me=key()
+  if not members[me] then
+    local mine=GuildCraftDB.members and GuildCraftDB.members[me]
+    if not mine then
+      for _,guild in pairs(GuildCraftDB.guilds) do
+        if guild.members and guild.members[me] then mine=guild.members[me]; break end
+      end
+    end
+    if mine then
+      members[me]={professions=mine.professions or {},updated=mine.updated,localPlayer=true,recipes=mine.recipes or {},recipeUpdated=mine.recipeUpdated or {},cooldowns=mine.cooldowns or {}}
+    end
+  end
+  currentGuild=bucket; db=members
+  wipe(activeSeen); wipe(selectedCrafter)
+  return true
+end
+-- Older versions kept every guild in one list; move each member into the guild whose roster has them.
+local function migrateLegacy()
+  local legacy=GuildCraftDB and GuildCraftDB.members
+  if type(legacy)~='table' or not currentGuild then return end
+  local inGuild=IsInGuild and IsInGuild()
+  if inGuild and next(guildMembers)==nil then return end
+  local moved=0
+  for k,v in pairs(legacy) do
+    if k==key() or (inGuild and guildMembers[shortName(k)]) then
+      if not db[k] then db[k]=v; moved=moved+1 end
+      legacy[k]=nil
+    end
+  end
+  if next(legacy)==nil then GuildCraftDB.members=nil end
+  if moved>0 then requestUpdate() end
 end
 local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
@@ -1766,7 +1818,7 @@ local function later(seconds,fn)
 end
 frame:SetScript('OnEvent',function(_,event,...)
   if event=='PLAYER_LOGIN' then
-    initDB(); save()
+    initDB(); selectGuild(); save(); migrateLegacy()
     local register=(C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
     if register then register(PREFIX); register(RECIPE_PREFIX) end
     makeMinimapButton()
@@ -1791,9 +1843,12 @@ frame:SetScript('OnEvent',function(_,event,...)
   elseif event=='SKILL_LINES_CHANGED' then
     save(); requestUpdate(); announce(false)
   elseif event=='PLAYER_GUILD_UPDATE' then
+    if selectGuild() then save() end
     announce(true); addonSend('Q|'..key()); requestRoster(); requestUpdate()
   elseif event=='GUILD_ROSTER_UPDATE' then
-    refreshRoster(); refreshMinimap(); requestUpdate()
+    refreshRoster()
+    if selectGuild() then save() end
+    migrateLegacy(); refreshMinimap(); requestUpdate()
   elseif event=='BAG_UPDATE' or event=='GET_ITEM_INFO_RECEIVED' or event=='ITEM_DATA_LOAD_RESULT' then
     requestUpdate()
   elseif event=='CHAT_MSG_ADDON' then
