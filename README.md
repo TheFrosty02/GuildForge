@@ -2,7 +2,7 @@
 
 **Your guild's professions, all in one place.** GuildCraft shares every member's profession skills and known recipes over guild addon chat, so you can see who can craft what, what it takes to make it, and whether you already have the mats — without spamming guild chat.
 
-Works on **WoW Classic Era** and is ready for **WoW: Forever**.
+Built for **WoW Forever**, and also works on **Classic Era**.
 
 ![Guild Professions overview](docs/screenshots/overview.webp)
 
@@ -45,7 +45,8 @@ Click the gear next to **Sync Guild** to toggle the minimap button, item tooltip
 
 ## Installation
 
-1. Download this repository and put the `GuildCraft` folder in your AddOns folder:
+1. Install from CurseForge, or download this repository and put the `GuildCraft` folder in your AddOns folder:
+   - WoW Forever: `World of Warcraft/_forever_/Interface/AddOns/GuildCraft`
    - Classic Era: `World of Warcraft/_classic_era_/Interface/AddOns/GuildCraft`
 2. Make sure the folder contains `GuildCraft.toc` and `GuildCraft.lua`.
 3. Restart the game (or `/reload`) and enable GuildCraft on the character select AddOns screen.
@@ -74,9 +75,20 @@ Your guildmates need GuildCraft too — the more people running it, the more com
 
 ## Compatibility
 
-- **Classic Era** (interface 11509) is the main target.
-- **WoW: Forever** (interface 16001, from the beta) is supported from the same files and also appears in the minimap addon menu. Forever's API may still change before and after launch.
+- **WoW Forever** (`GuildCraft_Forever.toc`, interface 16001 from the beta) is the main target. GuildCraft reads recipes from Forever's profession window, appears in the minimap addon menu and in Esc → Options → AddOns, supports first and last names, and holds guild messages while the game blocks addon chat (for example in combat in instances), sending them afterwards. If Forever launches with a different interface number, update the TOC.
+- **Classic Era** (`GuildCraft_Vanilla.toc`, interface 11509) runs from the same files.
 - Guildmates on older GuildCraft versions still sync with newer ones; they just won't see reagent details, cooldowns or the faster summary syncing until they update.
+
+## Releasing
+
+Pushing a version tag builds `GuildCraft.zip` with the [BigWigs packager](https://github.com/BigWigsMods/packager) and publishes it (see `.github/workflows/release.yml`):
+
+```
+git tag v0.14.0
+git push origin v0.14.0
+```
+
+The tag becomes the addon's version, and the matching `CHANGELOG.md` section becomes the release notes. The ZIP is always attached to a GitHub release; it's also uploaded to CurseForge once the repository has a `CF_API_KEY` secret and the TOC files have `## X-Curse-Project-ID`. `CURSEFORGE.md` holds the project page description.
 
 ## Credits
 
