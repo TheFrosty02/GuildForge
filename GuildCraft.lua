@@ -1,6 +1,6 @@
 -- GuildCraft 0.12.0 - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
 -- craft requests, shopping list, item tooltips, cooldowns, learnable recipes, summary-based syncing, settings
-local VERSION='0.13.0'
+local VERSION='0.14.0'
 local PREFIX='GCRFT96' -- preserve working profession sync protocol
 local RECIPE_PREFIX='GCRFT10'
 local frame=CreateFrame('Frame')
@@ -15,7 +15,8 @@ local recipeQueue, recipePending = {}, {}
 local recipeSent, recipeReceived = 0, 0
 local lastRecipeSend = 0
 local sendFailures, droppedMessages = 0, 0
-local addonVersions = {} -- nameId -> GuildCraft version heard this session ('' = older than 0.13)
+local addonVersions = {} -- nameId -> GuildCraft version heard this session
+local cdStampSeen = {} -- who -> last cooldown stamp we pulled for
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
 local activeSeen, guildOnline, guildLastSeen, guildMembers = {}, {}, {}, {}
 local rosterHasOffline = false
@@ -79,11 +80,13 @@ local DOT_TEXTURE='Interface\\CharacterFrame\\TempPortraitAlphaMask'
 local BACKDROP_TEMPLATE=BackdropTemplateMixin and 'BackdropTemplate' or nil
 local CONTENT_W=646
 local update, refreshMinimap, selectTab
-local clearMyData
+local clearMyData, handleSummary, handleAsk
 local function releaseSearchFocus()
   if searchBox and searchBox:HasFocus() then searchBox:ClearFocus() end
 end
+-- requestUpdate: guild data changed (rebuild tooltip index too); requestRedraw: only bags/time changed.
 local function requestUpdate() updatePending=true; indexDirty=true end
+local function requestRedraw() updatePending=true end
 local scanRecipes, queueRecipes
 local db, recipeInfo, lastBroadcast= nil, nil, 0
 local received, sent=0,0
@@ -209,7 +212,7 @@ local function save()
   if not playerName() or db==tempMembers then return end
   local name=key()
   local previous=db[name] or {}
-  db[name]={professions=scan(),updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {}}
+  db[name]={professions=scan(),updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {},cdStamp=previous.cdStamp}
 end
 local function addonSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
@@ -242,7 +245,8 @@ local function parseMessage(message,sender)
   local action,who,extra=message:match('^([^|]+)|([^|]+)|?(.*)$')
   if not action or not who or who==key() then return end
   if not senderMatches(sender,who) then return end
-  if action=='Q' then announce(true); return end
+  if action=='S' then handleSummary(who,extra); return end
+  if action=='A' then handleAsk(extra); return end
   if action=='B' then pending[who]={professions={},updated=now()}; return end
   if action=='P' then
     local record=pending[who]
@@ -277,8 +281,8 @@ end
 local function listHash(list)
   local h=#list
   for _,name in ipairs(list) do
-    for i=1,#name do h=(h*31+name:byte(i))%2147483629 end
-    h=(h*31+10)%2147483629
+    for i=1,#name do h=(h*31+name:byte(i))%16777213 end
+    h=(h*31+10)%16777213
   end
   return h
 end
@@ -336,12 +340,6 @@ local function catalogList(prof)
   return list
 end
 local catalogQueuedAt={}
-local function queueCatalogSummaries()
-  for prof in pairs(craftable) do
-    local list=catalogList(prof)
-    if #list>0 then recipeQueue[#recipeQueue+1]='K|'..key()..'|'..prof..'|'..#list..':'..listHash(list) end
-  end
-end
 local function queueCatalog(prof)
   if catalogQueuedAt[prof] and now()-catalogQueuedAt[prof]<30 then return end
   catalogQueuedAt[prof]=now()
@@ -351,12 +349,74 @@ local function queueCatalog(prof)
     if #payload<=250 then recipeQueue[#recipeQueue+1]=payload end
   end
 end
-local function queueSummaries()
+-- Roll call: one S message per player fingerprints their professions, recipe lists, cooldowns and catalog.
+-- S|who|version;p<professions>;c<cooldown stamp>;k<catalog>;<profIndex>:<count>:<hash>;...
+local function professionHash(list)
+  local parts={}
+  for _,p in ipairs(type(list)=='table' and list or {}) do
+    parts[#parts+1]=tostring(p.name)..':'..tostring(p.rank)..':'..tostring(p.max)
+  end
+  table.sort(parts)
+  return listHash(parts)
+end
+local function catalogHash()
+  local all={}
+  for prof in pairs(craftable) do
+    for _,name in ipairs(catalogList(prof)) do all[#all+1]=prof..'|'..name end
+  end
+  table.sort(all)
+  return #all>0 and listHash(all) or 0
+end
+local function sendSummary()
   local mine=db and db[key()]
-  for prof,list in pairs(mine and mine.recipes or {}) do
+  if not mine then return end
+  local parts={VERSION,'p'..professionHash(mine.professions),'c'..(mine.cdStamp or 0),'k'..catalogHash()}
+  for index,prof in ipairs(professions) do
+    local list=mine.recipes and mine.recipes[prof]
     if craftable[prof] and type(list)=='table' and #list>0 then
-      recipeQueue[#recipeQueue+1]='H|'..key()..'|'..prof..'|'..#list..':'..listHash(list)
+      parts[#parts+1]=index..':'..#list..':'..listHash(list)
     end
+  end
+  local payload='S|'..key()..'|'..table.concat(parts,';')
+  if #payload<=250 then addonSend(payload) end
+end
+local function recentlyAsked(askKey,seconds)
+  if pullRequestedAt[askKey] and now()-pullRequestedAt[askKey]<seconds then return true end
+  pullRequestedAt[askKey]=now()
+  return false
+end
+-- Compare a guildmate's summary with what we saved and request only what differs.
+handleSummary=function(who,extra)
+  local version,rest=(extra or ''):match('^([^;]*);?(.*)$')
+  if not version then return end
+  addonVersions[nameId(who)]=version
+  local record=db[who]
+  local wants=''
+  for token in rest:gmatch('[^;]+') do
+    local kind,value=token:sub(1,1),token:sub(2)
+    if kind=='p' then
+      if not record or professionHash(record.professions)~=tonumber(value) then wants=wants..'p' end
+    elseif kind=='c' then
+      local stamp=tonumber(value)
+      if stamp and stamp>0 and cdStampSeen[who]~=stamp then cdStampSeen[who]=stamp; wants=wants..'c' end
+    elseif kind=='k' then
+      local hash=tonumber(value)
+      -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
+      if hash and hash>0 and hash~=catalogHash() then wants=wants..'k' end
+    else
+      local index,count,hash=token:match('^(%d+):(%d+):(%d+)$')
+      local prof=index and professions[tonumber(index)]
+      if prof and craftable[prof] then
+        local known=record and record.recipes and record.recipes[prof]
+        local current=type(known)=='table' and #known==tonumber(count) and listHash(known)==tonumber(hash)
+        if not current and not recentlyAsked(who..'|'..prof,60) then
+          recipeQueue[#recipeQueue+1]='G|'..key()..'|'..prof..'|'..who
+        end
+      end
+    end
+  end
+  if wants~='' and not recentlyAsked('A|'..who..'|'..wants,60) then
+    addonSend('A|'..key()..'|'..who..'~'..wants)
   end
 end
 
@@ -383,7 +443,10 @@ local function setMyCooldown(name,prof,remaining)
   local readyAt=remaining>0 and (now()+math.floor(remaining)) or 0
   local old=mine.cooldowns[name]
   mine.cooldowns[name]={prof=prof,readyAt=readyAt,updated=now()}
-  return not old or math.abs((old.readyAt or 0)-readyAt)>60
+  local changed=not old or math.abs((old.readyAt or 0)-readyAt)>60
+  -- Summaries carry this stamp so guildmates only pull cooldowns after a change.
+  if changed then mine.cdStamp=now() end
+  return changed
 end
 local function checkCooldowns()
   if not db then return false end
@@ -406,6 +469,16 @@ local function queueCooldowns()
       recipeQueue[#recipeQueue+1]='C|'..key()..'|'..cd.prof..'|'..clean(name)..'~'..remaining
     end
   end
+end
+local cooldownsAskedAt=0
+-- A guildmate asked us for professions (p), cooldowns (c) or our trainer catalog (k).
+handleAsk=function(extra)
+  local target,wants=(extra or ''):match('^(.-)~(%a*)$')
+  if target~=key() then return end
+  -- announce() itself skips repeats within 15 seconds, so several askers get one broadcast.
+  if wants:find('p',1,true) then announce(false) end
+  if wants:find('c',1,true) and now()-cooldownsAskedAt>=30 then cooldownsAskedAt=now(); queueCooldowns() end
+  if wants:find('k',1,true) then for prof in pairs(craftable) do queueCatalog(prof) end end
 end
 
 local function receiveRecipe(msg,sender)
@@ -455,30 +528,8 @@ local function receiveRecipe(msg,sender)
     end
     recipeInfo[prof][name]={link=link,reagents=reagents,remote=true}
     requestUpdate()
-  elseif action=='H' then
-    -- Only pull a full list when our copy is missing or differs from the sender's summary.
-    local count,hash=(extra or ''):match('^(%d+):(%d+)$')
-    if not count then return end
-    local record=db[who]
-    local known=record and record.recipes and record.recipes[prof]
-    if type(known)=='table' and #known==tonumber(count) and listHash(known)==tonumber(hash) then return end
-    if pullRequestedAt[pendingKey] and now()-pullRequestedAt[pendingKey]<60 then return end
-    pullRequestedAt[pendingKey]=now()
-    recipeQueue[#recipeQueue+1]='G|'..key()..'|'..prof..'|'..who
   elseif action=='G' then
     if extra==key() then queueRecipes(prof) end
-  elseif action=='K' then
-    -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
-    local count,hash=(extra or ''):match('^(%d+):(%d+)$')
-    if not count then return end
-    local mine=catalogList(prof)
-    if #mine==tonumber(count) and listHash(mine)==tonumber(hash) then return end
-    local pullKey='K|'..pendingKey
-    if pullRequestedAt[pullKey] and now()-pullRequestedAt[pullKey]<60 then return end
-    pullRequestedAt[pullKey]=now()
-    recipeQueue[#recipeQueue+1]='J|'..key()..'|'..prof..'|'..who
-  elseif action=='J' then
-    if extra==key() then queueCatalog(prof) end
   elseif action=='T' then
     local name,req,link=(extra or ''):match('^([^~]+)~(%d*)~([^~]*)$')
     if not name then return end
@@ -663,7 +714,7 @@ local function scanTrainer()
       end
     end
   end
-  if added>0 then log('Catalogued '..added..' trainer recipes; sharing with the guild.'); queueCatalogSummaries(); requestUpdate() end
+  if added>0 then log('Catalogued '..added..' trainer recipes; sharing with the guild.'); sendSummary(); requestUpdate() end
 end
 local scanScheduled=false
 scanRecipes=function()
@@ -673,10 +724,18 @@ scanRecipes=function()
   scanModernTradeSkill()
 end
 -- Sync asks for summaries; guildmates pull only the lists that differ. Older clients still get full lists.
+-- Roll call: V|who|version|r asks everyone online to reply with their one-message summary.
+local lastRollCall=0
+local function rollCall(force)
+  if not force and now()-lastRollCall<30 then return end
+  lastRollCall=now()
+  addonSend('V|'..key()..'|'..VERSION..'|r')
+  sendSummary()
+end
 local function doSync()
-  save(); announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2')
-  addonSend('V|'..key()..'|'..VERSION)
-  queueSummaries(); queueCatalogSummaries(); checkCooldowns(); queueCooldowns(); requestUpdate()
+  save()
+  if checkCooldowns() then queueCooldowns() end
+  rollCall(true); requestUpdate()
   log('Guild sync request sent.')
 end
 local function doPush()
@@ -737,7 +796,7 @@ local function selectGuild()
       end
     end
     if mine then
-      members[me]={professions=mine.professions or {},updated=mine.updated,localPlayer=true,recipes=mine.recipes or {},recipeUpdated=mine.recipeUpdated or {},cooldowns=mine.cooldowns or {}}
+      members[me]={professions=mine.professions or {},updated=mine.updated,localPlayer=true,recipes=mine.recipes or {},recipeUpdated=mine.recipeUpdated or {},cooldowns=mine.cooldowns or {},cdStamp=mine.cdStamp}
     end
   end
   currentGuild=bucket; db=members
@@ -1112,7 +1171,7 @@ local function professionData(prof,term)
   local crafters,recipes,byName=gather(prof)
   local filter=selectedCrafter[prof]
   local matsOnly=GuildCraftDB and GuildCraftDB.ui.matsOnly
-  local d={crafters=crafters,recipes=recipes,fc={},fr={},unknown={},unknownTotal=0,ready=0,filter=filter}
+  local d={crafters=crafters,recipes=recipes,crafterCount=#crafters,recipeCount=#recipes,fc={},fr={},unknown={},unknownTotal=0,ready=0,filter=filter}
   for _,c in ipairs(crafters) do
     if term=='' or found(prof,term) or found(c.character,term) then d.fc[#d.fc+1]=c end
     if c.key==filter then d.filterName=c.character end
@@ -1142,6 +1201,32 @@ local function professionData(prof,term)
   end)
   if filter and not d.filterName then selectedCrafter[prof]=nil; d.filter=nil end
   return d
+end
+-- Counts and top crafter for every profession in one pass, for the All tab when nothing is searched.
+local function professionOverview()
+  local out={}
+  for _,prof in ipairs(professions) do out[prof]={crafterCount=0,recipeCount=0,seen={}} end
+  for who,record in pairs(currentMembers()) do
+    if type(record)=='table' then
+      for _,p in ipairs(record.professions or {}) do
+        local o=out[p.name]
+        if o then
+          o.crafterCount=o.crafterCount+1
+          local rank=tonumber(p.rank) or 0
+          if not o.top or rank>o.top.rank then o.top={character=displayName(who),rank=rank} end
+        end
+      end
+      for prof,list in pairs(type(record.recipes)=='table' and record.recipes or {}) do
+        local o=out[prof]
+        if o and type(list)=='table' then
+          for _,name in ipairs(list) do
+            if not o.seen[name] then o.seen[name]=true; o.recipeCount=o.recipeCount+1 end
+          end
+        end
+      end
+    end
+  end
+  return out
 end
 local function gatherCooldowns(prof,term)
   local list,ready={},0
@@ -1525,20 +1610,21 @@ update=function()
     local totalCrafters,totalRecipes=0,0
     addCooldownSection('all|cooldowns',nil)
     local any=false
+    local overview=not searching and professionOverview()
     for _,prof in ipairs(professions) do
-      local d=professionData(prof,term)
-      totalCrafters=totalCrafters+#d.crafters; totalRecipes=totalRecipes+#d.recipes
+      local d=overview and overview[prof] or professionData(prof,term)
+      totalCrafters=totalCrafters+d.crafterCount; totalRecipes=totalRecipes+d.recipeCount
       local profMatch=searching and found(prof,term)
       if not searching or profMatch or #d.fc>0 or #d.fr>0 then
         any=true
         local h=acquire('profHeader')
         h.icon:SetTexture(professionIcons[prof])
         h.name:SetText(prof)
-        local info=#d.crafters..' crafters'
-        if #d.recipes>0 then info=info..'  |cffa0a0a0·|r  '..#d.recipes..' recipes' end
+        local info=d.crafterCount..' crafters'
+        if d.recipeCount>0 then info=info..'  |cffa0a0a0·|r  '..d.recipeCount..' recipes' end
         if d.top then info=info..'  |cffa0a0a0·|r  Top: |cffffd100'..d.top.character..'|r ('..d.top.rank..')' end
         h.info:SetText(info)
-        h.icon:SetDesaturated(#d.crafters==0)
+        h.icon:SetDesaturated(d.crafterCount==0)
         h:SetScript('OnClick',function() releaseSearchFocus(); selectTab(prof) end)
         y=y+2
         place(h,42)
@@ -1964,6 +2050,8 @@ for _,event in ipairs({'PLAYER_LOGIN','SKILL_LINES_CHANGED','CHAT_MSG_ADDON','PL
   'GUILD_ROSTER_UPDATE','BAG_UPDATE','GET_ITEM_INFO_RECEIVED','ITEM_DATA_LOAD_RESULT'}) do
   pcall(frame.RegisterEvent,frame,event)
 end
+local syncReady=false
+local summaryScheduled=false
 local function later(seconds,fn)
   if C_Timer and C_Timer.After then C_Timer.After(seconds,fn) else fn() end
 end
@@ -1977,7 +2065,7 @@ clearMyData=function()
     wipe(db)
     if mine then db[me]=mine end
   end
-  wipe(tempMembers); wipe(recipePending); wipe(pullRequestedAt); wipe(selectedCrafter)
+  wipe(tempMembers); wipe(recipePending); wipe(pullRequestedAt); wipe(selectedCrafter); wipe(cdStampSeen)
   GuildCraftDB.members=nil
   for _,list in pairs(recipeInfo or {}) do
     for name,info in pairs(list) do
@@ -2005,10 +2093,9 @@ frame:SetScript('OnEvent',function(_,event,...)
     -- Probe first so our name matches what guildmates see before the real sync goes out.
     later(2,function() addonSend('V|'..key()..'|'..VERSION) end)
     later(5,function()
+      syncReady=true
       checkCooldowns()
-      if GuildCraftDB.settings.syncOnLogin then
-        announce(true); addonSend('Q|'..key()); recipeSend('R|'..key()..'|2'); queueSummaries(); queueCatalogSummaries(); queueCooldowns()
-      end
+      if GuildCraftDB.settings.syncOnLogin then rollCall(true) else sendSummary() end
     end)
   elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
     if not scanScheduled then scanScheduled=true; later(0.3,scanRecipes) end
@@ -2022,20 +2109,28 @@ frame:SetScript('OnEvent',function(_,event,...)
   elseif event=='SKILL_LINES_CHANGED' then
     save(); requestUpdate(); announce(false)
   elseif event=='PLAYER_GUILD_UPDATE' then
-    if selectGuild() then save() end
-    announce(true); addonSend('Q|'..key()); requestRoster(); requestUpdate()
+    -- Joining a guild mid-session needs a fresh roll call; at login the 5-second sync handles it.
+    if selectGuild() then save(); if syncReady then rollCall(true) end end
+    requestRoster(); requestUpdate()
   elseif event=='GUILD_ROSTER_UPDATE' then
     refreshRoster()
     if selectGuild() then save() end
     migrateLegacy(); pruneFormerMembers(); refreshMinimap(); requestUpdate()
   elseif event=='BAG_UPDATE' or event=='GET_ITEM_INFO_RECEIVED' or event=='ITEM_DATA_LOAD_RESULT' then
-    requestUpdate()
+    requestRedraw()
   elseif event=='CHAT_MSG_ADDON' then
     local prefix,msg,channel,sender=...
     if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg:sub(1,2)=='V|' then
-      local who,version=msg:match('^V|([^|]+)|?(.*)$')
+      local who,version,flag=msg:match('^V|([^|]+)|?([^|]*)|?(.*)$')
       if who==key() and not isSecret(sender) then learnOwnName(sender); requestUpdate(); return end
-      if who and senderMatches(sender,who) then addonVersions[nameId(who)]=version end
+      if who and senderMatches(sender,who) then
+        addonVersions[nameId(who)]=version
+        -- Reply to a roll call after a random delay so a big guild's answers trickle in.
+        if flag=='r' and syncReady and not summaryScheduled then
+          summaryScheduled=true
+          later(1+math.random()*9,function() summaryScheduled=false; sendSummary() end)
+        end
+      end
     end
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       -- Count by the name in the payload when the client hides the sender.
@@ -2044,13 +2139,7 @@ frame:SetScript('OnEvent',function(_,event,...)
     end
     if channel=='GUILD' then
       if prefix==PREFIX then parseMessage(msg,sender); requestUpdate() end
-      if prefix==RECIPE_PREFIX then
-        if type(msg)=='string' and msg:sub(1,2)=='R|' and senderMatches(sender,msg:match('^R|([^|]+)')) then
-          -- v2 requesters compare summaries and pull what changed; older clients need full lists.
-          if msg:find('|2',3,true) then queueSummaries(); queueCatalogSummaries() else shareAllRecipes() end
-          queueCooldowns()
-        else receiveRecipe(msg,sender) end
-      end
+      if prefix==RECIPE_PREFIX then receiveRecipe(msg,sender) end
     end
   end
 end)
@@ -2079,7 +2168,7 @@ frame:SetScript('OnUpdate',function(_,elapsed)
     sinceRoster=0; requestRoster()
     if checkCooldowns() then queueCooldowns() end
     -- Keeps cooldown countdowns and "seen" times current while the window is open.
-    requestUpdate()
+    requestRedraw()
   end
 end)
 print('|cff00ff00GuildCraft: v'..VERSION..' Lua loaded; slash commands registered.|r')
