@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#6b2118"/><stop offset="60%" stop-color="#3a110c"/><stop offset="100%" stop-color="#160705"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff3b8"/><stop offset="40%" stop-color="#f0c457"/><stop offset="75%" stop-color="#c38a2a"/><stop offset="100%" stop-color="#8a5a16"/>
+    </linearGradient>
+    <linearGradient id="goldSide" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe9a0"/><stop offset="50%" stop-color="#d9a23c"/><stop offset="100%" stop-color="#7d5012"/>
+    </linearGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7f8a94"/><stop offset="45%" stop-color="#f1f5f8"/><stop offset="100%" stop-color="#6c7781"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#4a2a12"/><stop offset="50%" stop-color="#8d5a2b"/><stop offset="100%" stop-color="#3d220e"/>
+    </linearGradient>
+    <radialGradient id="shield" cx="50%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#2f4673"/><stop offset="100%" stop-color="#0f1729"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#000" flood-opacity="0.6"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect x="18" y="18" width="476" height="476" rx="50" fill="none" stroke="url(#goldSide)" stroke-width="8"/>
+  <rect x="32" y="32" width="448" height="448" rx="40" fill="none" stroke="#c38a2a" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- Crossed smithing hammer and tailoring needle behind the crest -->
+  <g filter="url(#shadow)">
+    <g transform="rotate(-42 256 256)">
+      <rect x="243" y="118" width="26" height="300" rx="9" fill="url(#wood)" stroke="#1d0f05" stroke-width="3"/>
+      <rect x="238" y="398" width="36" height="22" rx="6" fill="url(#gold)" stroke="#1d0f05" stroke-width="3"/>
+      <rect x="186" y="74" width="140" height="62" rx="10" fill="url(#steel)" stroke="#1d0f05" stroke-width="4"/>
+      <rect x="236" y="70" width="40" height="70" rx="6" fill="url(#gold)" stroke="#1d0f05" stroke-width="3"/>
+    </g>
+    <g transform="rotate(42 256 256)">
+      <path d="M256 66 C266 70 269 92 269 118 L265 392 L256 432 L247 392 L243 118 C243 92 246 70 256 66 Z" fill="url(#steel)" stroke="#1d0f05" stroke-width="4"/>
+      <ellipse cx="256" cy="104" rx="5" ry="20" fill="#1d0f05"/>
+      <path d="M256 92 C214 70 200 128 236 150 C268 170 300 142 286 120" fill="none" stroke="#c0392b" stroke-width="7" stroke-linecap="round"/>
+    </g>
+  </g>
+
+  <!-- Guild shield -->
+  <path d="M256 112 L368 146 L368 262 C368 334 318 384 256 412 C194 384 144 334 144 262 L144 146 Z"
+        fill="url(#shield)" stroke="url(#gold)" stroke-width="12" stroke-linejoin="round" filter="url(#shadow)"/>
+  <path d="M256 132 L350 160 L350 262 C350 322 309 364 256 390 C203 364 162 322 162 262 L162 160 Z"
+        fill="none" stroke="#f0c457" stroke-opacity="0.35" stroke-width="2"/>
+
+  <!-- Profession gear with the GC monogram -->
+  <g fill="url(#gold)" stroke="#5a3a10" stroke-width="3" filter="url(#shadow)">
+    <rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(0 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(45 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(90 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(135 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(180 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(225 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(270 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(315 256 248)"/>
+    <circle cx="256" cy="248" r="64"/>
+  </g>
+  <circle cx="256" cy="248" r="46" fill="#121c31" stroke="#5a3a10" stroke-width="3"/>
+  <text x="256" y="264" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold"
+        font-size="44" fill="url(#gold)" stroke="#2a1608" stroke-width="1.5" letter-spacing="1">GC</text>
+
+  <!-- Name ribbon -->
+  <g filter="url(#shadow)">
+    <path d="M72 398 L118 398 L118 452 L72 452 L90 425 Z" fill="#8a5a16" stroke="#3a2108" stroke-width="3"/>
+    <path d="M440 398 L394 398 L394 452 L440 452 L422 425 Z" fill="#8a5a16" stroke="#3a2108" stroke-width="3"/>
+    <rect x="104" y="390" width="304" height="56" rx="6" fill="url(#gold)" stroke="#3a2108" stroke-width="3"/>
+  </g>
+  <text x="256" y="429" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold"
+        font-size="32" fill="#2a1608" letter-spacing="3">GUILDCRAFT</text>
+</svg>
