@@ -1,10 +1,10 @@
 <!-- Paste everything below this line into the CurseForge project description (Markdown mode). -->
 
-# GuildCraft
+# GuildForge
 
 **Your guild's professions, all in one place.**
 
-GuildCraft shares every member's profession skills and known recipes over hidden guild addon messages, so you can see who can craft what, what it takes to make it, and whether you already have the mats, without spamming guild chat.
+GuildForge shares every member's profession skills and known recipes over hidden guild addon messages, so you can see who can craft what, what it takes to make it, and whether you already have the mats, without spamming guild chat.
 
 Built for **WoW Forever**, and also works on **Classic Era**.
 
@@ -29,19 +29,19 @@ Built for **WoW Forever**, and also works on **Classic Era**.
 
 ## Usage
 
-Click the **GC** button on your minimap or type `/guildcraft`. Open each of your professions once so GuildCraft can share your recipes, and visit trainers to fill in **Not known in guild**.
+Click the **GF** button on your minimap or type `/guildforge`. Open each of your professions once so GuildForge can share your recipes, and visit trainers to fill in **Not known in guild**.
 
 | Command | What it does |
 | --- | --- |
-| `/guildcraft` | Open or close the window |
-| `/guildcraft sync` | Ask the guild for anything that changed |
-| `/guildcraft settings` | Open the settings |
-| `/guildcraft clear` | Forget received data and download it fresh |
-| `/guildcraft who` | List guildmates online with GuildCraft and their versions |
+| `/guildforge` | Open or close the window |
+| `/guildforge sync` | Ask the guild for anything that changed |
+| `/guildforge settings` | Open the settings |
+| `/guildforge clear` | Forget received data and download it fresh |
+| `/guildforge who` | List guildmates online with GuildForge and their versions |
 
 ## Good to know
 
-Your guildmates need GuildCraft too: the more people running it, the more complete the guild's list gets. Data is stored per account and kept separately for each guild.
+Your guildmates need GuildForge too: the more people running it, the more complete the guild's list gets. Data is stored per account and kept separately for each guild.
 
 ## Feedback
 

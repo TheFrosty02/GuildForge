@@ -48,14 +48,14 @@
   <path d="M256 132 L350 160 L350 262 C350 322 309 364 256 390 C203 364 162 322 162 262 L162 160 Z"
         fill="none" stroke="#f0c457" stroke-opacity="0.35" stroke-width="2"/>
 
-  <!-- Profession gear with the GC monogram -->
+  <!-- Profession gear with the GF monogram -->
   <g fill="url(#gold)" stroke="#5a3a10" stroke-width="3" filter="url(#shadow)">
     <rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(0 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(45 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(90 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(135 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(180 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(225 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(270 256 248)"/><rect x="243" y="176" width="26" height="30" rx="4" transform="rotate(315 256 248)"/>
     <circle cx="256" cy="248" r="64"/>
   </g>
   <circle cx="256" cy="248" r="46" fill="#121c31" stroke="#5a3a10" stroke-width="3"/>
   <text x="256" y="264" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold"
-        font-size="44" fill="url(#gold)" stroke="#2a1608" stroke-width="1.5" letter-spacing="1">GC</text>
+        font-size="44" fill="url(#gold)" stroke="#2a1608" stroke-width="1.5" letter-spacing="1">GF</text>
 
   <!-- Name ribbon -->
   <g filter="url(#shadow)">
@@ -64,5 +64,5 @@
     <rect x="104" y="390" width="304" height="56" rx="6" fill="url(#gold)" stroke="#3a2108" stroke-width="3"/>
   </g>
   <text x="256" y="429" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="bold"
-        font-size="32" fill="#2a1608" letter-spacing="3">GUILDCRAFT</text>
+        font-size="32" fill="#2a1608" letter-spacing="3">GUILDFORGE</text>
 </svg>

@@ -1,9 +1,9 @@
 ## Interface: 11509
-## Title: |cffe7c483GuildCraft|r
+## Title: |cffe7c483GuildForge|r
 ## Notes: Guild professions, recipes with reagents, craft requests, shopping list, cooldowns and item tooltips
 ## Author: TheFrosty02, Kota150
 ## Version: @project-version@
-## SavedVariables: GuildCraftDB
-## IconTexture: Interface\Icons\Trade_Engineering
+## SavedVariables: GuildForgeDB
+## IconTexture: Interface\Icons\Trade_BlackSmithing
 
-GuildCraft.lua
+GuildForge.lua

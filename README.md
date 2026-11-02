@@ -1,6 +1,6 @@
-# GuildCraft
+# GuildForge
 
-**Your guild's professions, all in one place.** GuildCraft shares every member's profession skills and known recipes over guild addon chat, so you can see who can craft what, what it takes to make it, and whether you already have the mats — without spamming guild chat.
+**Your guild's professions, all in one place.** GuildForge shares every member's profession skills and known recipes over guild addon chat, so you can see who can craft what, what it takes to make it, and whether you already have the mats — without spamming guild chat.
 
 Built for **WoW Forever**, and also works on **Classic Era**.
 
@@ -26,7 +26,7 @@ Every known recipe shows its icon, item-quality color, who can craft it, and whe
 ![Expanded recipe with reagents and actions](docs/screenshots/recipe.png)
 
 ### Shopping list
-Collect the recipes you plan to make and GuildCraft combines them into one list of materials, showing what you've gathered and how many more you need. The same "need 4 more" note appears on item tooltips everywhere — bags, vendors and the auction house.
+Collect the recipes you plan to make and GuildForge combines them into one list of materials, showing what you've gathered and how many more you need. The same "need 4 more" note appears on item tooltips everywhere — bags, vendors and the auction house.
 
 ![Shopping list](docs/screenshots/shopping-list.png)
 
@@ -35,7 +35,7 @@ Collect the recipes you plan to make and GuildCraft combines them into one list 
 - **Item tooltips** show which guildmates craft an item and which recipes use it.
 - **Cooldowns** — Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild can see who's ready.
 - **Not known in guild** — recipes seen at trainers that nobody in the guild has learned yet, with the skill they require. Anyone's trainer visits fill in the list for the whole guild.
-- **Minimap button** — a "GC" bubble with a badge counting guildmates online with GuildCraft. Left-click to open, right-click to sync, drag to move.
+- **Minimap button** — a "GF" bubble with a badge counting guildmates online with GuildForge. Left-click to open, right-click to sync, drag to move.
 - **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
 
 ### Settings
@@ -45,43 +45,43 @@ Click the gear next to **Sync Guild** to toggle the minimap button, item tooltip
 
 ## Installation
 
-1. Install from CurseForge, or download this repository and put the `GuildCraft` folder in your AddOns folder:
-   - WoW Forever: `World of Warcraft/_forever_/Interface/AddOns/GuildCraft`
-   - Classic Era: `World of Warcraft/_classic_era_/Interface/AddOns/GuildCraft`
-2. Make sure the folder contains `GuildCraft.toc` and `GuildCraft.lua`.
-3. Restart the game (or `/reload`) and enable GuildCraft on the character select AddOns screen.
+1. Install from CurseForge, or download this repository and put the `GuildForge` folder in your AddOns folder:
+   - WoW Forever: `World of Warcraft/_forever_/Interface/AddOns/GuildForge`
+   - Classic Era: `World of Warcraft/_classic_era_/Interface/AddOns/GuildForge`
+2. Make sure the folder contains `GuildForge.toc` and `GuildForge.lua`.
+3. Restart the game (or `/reload`) and enable GuildForge on the character select AddOns screen.
 
 ## Getting started
 
-1. Open each of your professions once (for example your First Aid or Leatherworking window). GuildCraft scans the recipes you know and shares them with the guild.
+1. Open each of your professions once (for example your First Aid or Leatherworking window). GuildForge scans the recipes you know and shares them with the guild.
 2. Visit profession trainers to fill in the **Not known in guild** lists.
-3. Click the **GC** minimap button or type `/guildcraft` to open the window.
+3. Click the **GF** minimap button or type `/guildforge` to open the window.
 
-Your guildmates need GuildCraft too — the more people running it, the more complete the guild's list gets.
+Your guildmates need GuildForge too — the more people running it, the more complete the guild's list gets.
 
 ## Slash commands
 
 | Command | What it does |
 | --- | --- |
-| `/guildcraft` | Open or close the window (also `/gcraft`, `/guildprof`) |
-| `/guildcraft sync` | Ask the guild for any changed professions and recipes |
-| `/guildcraft push` | Re-share all of your recipes in full |
-| `/guildcraft refresh` | Rescan your own professions |
-| `/guildcraft settings` | Open the settings panel |
-| `/guildcraft minimap` | Show or hide the minimap button |
-| `/guildcraft clear` | Forget received guild data and download it again fresh |
-| `/guildcraft who` | List guildmates online with GuildCraft and their versions |
-| `/guildcraft status` | Print sync counters |
+| `/guildforge` | Open or close the window (also `/gforge`, `/guildprof`, and the old `/guildcraft`) |
+| `/guildforge sync` | Ask the guild for any changed professions and recipes |
+| `/guildforge push` | Re-share all of your recipes in full |
+| `/guildforge refresh` | Rescan your own professions |
+| `/guildforge settings` | Open the settings panel |
+| `/guildforge minimap` | Show or hide the minimap button |
+| `/guildforge clear` | Forget received guild data and download it again fresh |
+| `/guildforge who` | List guildmates online with GuildForge and their versions |
+| `/guildforge status` | Print sync counters |
 
 ## Compatibility
 
-- **WoW Forever** (`GuildCraft_Forever.toc`, interface 16001 from the beta) is the main target. GuildCraft reads recipes from Forever's profession window, appears in the minimap addon menu and in Esc → Options → AddOns, supports first and last names, and holds guild messages while the game blocks addon chat (for example in combat in instances), sending them afterwards. If Forever launches with a different interface number, update the TOC.
-- **Classic Era** (`GuildCraft_Vanilla.toc`, interface 11509) runs from the same files.
-- Guildmates on older GuildCraft versions still sync with newer ones; they just won't see reagent details, cooldowns or the faster summary syncing until they update.
+- **WoW Forever** (`GuildForge_Forever.toc`, interface 16001 from the beta) is the main target. GuildForge reads recipes from Forever's profession window, appears in the minimap addon menu and in Esc → Options → AddOns, supports first and last names, and holds guild messages while the game blocks addon chat (for example in combat in instances), sending them afterwards. If Forever launches with a different interface number, update the TOC.
+- **Classic Era** (`GuildForge_Vanilla.toc`, interface 11509) runs from the same files.
+- Guildmates on older GuildForge versions still sync with newer ones; they just won't see reagent details, cooldowns or the faster summary syncing until they update.
 
 ## Releasing
 
-Pushing a version tag builds `GuildCraft.zip` with the [BigWigs packager](https://github.com/BigWigsMods/packager) and publishes it (see `.github/workflows/release.yml`):
+Pushing a version tag builds `GuildForge.zip` with the [BigWigs packager](https://github.com/BigWigsMods/packager) and publishes it (see `.github/workflows/release.yml`):
 
 ```
 git tag v0.14.0

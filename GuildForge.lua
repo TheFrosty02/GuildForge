@@ -1,12 +1,13 @@
--- GuildCraft - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
+-- GuildForge - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
 -- craft requests, shopping list, item tooltips, cooldowns, learnable recipes, summary-based syncing, settings
 -- The release packager writes the git tag into the TOC; an unpackaged checkout still shows the placeholder.
 local GetMetadata=(C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
-local VERSION=GetMetadata and GetMetadata('GuildCraft','Version')
+local VERSION=GetMetadata and GetMetadata('GuildForge','Version')
 if type(VERSION)~='string' or VERSION:find('@',1,true) then VERSION='dev' end
 VERSION=VERSION:gsub('^v','')
-local PREFIX='GCRFT96' -- preserve working profession sync protocol
-local RECIPE_PREFIX='GCRFT10'
+-- Hidden guild addon-message channels: professions and roll calls, and recipe data.
+local PREFIX='GFORGE'
+local RECIPE_PREFIX='GFORGE_R'
 local frame=CreateFrame('Frame')
 local window, status, searchBox, scrollFrame, scrollContent
 local headerIcon, headerTitle, headerSub, matsCheck
@@ -19,7 +20,7 @@ local recipeQueue, recipePending = {}, {}
 local recipeSent, recipeReceived = 0, 0
 local lastRecipeSend = 0
 local sendFailures, droppedMessages = 0, 0
-local addonVersions = {} -- nameId -> GuildCraft version heard this session
+local addonVersions = {} -- nameId -> GuildForge version heard this session
 local cdStampSeen = {} -- who -> last cooldown stamp we pulled for
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
 local activeSeen, guildOnline, guildLastSeen, guildMembers = {}, {}, {}, {}
@@ -94,11 +95,11 @@ local function requestRedraw() updatePending=true end
 local scanRecipes, queueRecipes
 local db, recipeInfo, lastBroadcast= nil, nil, 0
 local received, sent=0,0
-local function settings() return GuildCraftDB and GuildCraftDB.settings or {} end
+local function settings() return GuildForgeDB and GuildForgeDB.settings or {} end
 -- Routine messages respect quiet mode; pass always=true for replies to something the player did.
 local function log(s,always)
   if not always and settings().quiet then return end
-  print('|cffd8aa55GuildCraft:|r '..tostring(s))
+  print('|cffd8aa55GuildForge:|r '..tostring(s))
 end
 local function realm() return (GetRealmName and GetRealmName()) or 'Unknown' end
 local cachedPlayer
@@ -108,7 +109,7 @@ local function playerName()
   if cachedPlayer then return cachedPlayer end
   local name=UnitName('player')
   if name and not isSecret(name) then
-    local learned=GuildCraftDB and GuildCraftDB.knownAs and GuildCraftDB.knownAs[name..'-'..realm()]
+    local learned=GuildForgeDB and GuildForgeDB.knownAs and GuildForgeDB.knownAs[name..'-'..realm()]
     cachedPlayer=learned or name
   end
   return cachedPlayer
@@ -153,9 +154,9 @@ local function learnOwnName(sender)
   local oldKey=key()
   cachedPlayer=character
   local newKey=key()
-  if GuildCraftDB then
-    GuildCraftDB.knownAs=GuildCraftDB.knownAs or {}
-    GuildCraftDB.knownAs[base..'-'..realm()]=character
+  if GuildForgeDB then
+    GuildForgeDB.knownAs=GuildForgeDB.knownAs or {}
+    GuildForgeDB.knownAs[base..'-'..realm()]=character
   end
   if db and db[oldKey] then
     if not db[newKey] then db[newKey]=db[oldKey] end
@@ -194,22 +195,22 @@ local function scan()
   return list
 end
 local function initDB()
-  GuildCraftDB=GuildCraftDB or {}
-  GuildCraftDB.guilds=GuildCraftDB.guilds or {}
+  GuildForgeDB=GuildForgeDB or {}
+  GuildForgeDB.guilds=GuildForgeDB.guilds or {}
   -- Recipe details (crafted item + reagents) are shared by name, independent of who knows them.
-  GuildCraftDB.recipeInfo=GuildCraftDB.recipeInfo or {}
-  GuildCraftDB.minimap=GuildCraftDB.minimap or {angle=200,hide=false}
-  GuildCraftDB.ui=GuildCraftDB.ui or {tab='All',matsOnly=false}
-  GuildCraftDB.shopping=GuildCraftDB.shopping or {}
-  GuildCraftDB.settings=GuildCraftDB.settings or {}
-  local s=GuildCraftDB.settings
+  GuildForgeDB.recipeInfo=GuildForgeDB.recipeInfo or {}
+  GuildForgeDB.minimap=GuildForgeDB.minimap or {angle=200,hide=false}
+  GuildForgeDB.ui=GuildForgeDB.ui or {tab='All',matsOnly=false}
+  GuildForgeDB.shopping=GuildForgeDB.shopping or {}
+  GuildForgeDB.settings=GuildForgeDB.settings or {}
+  local s=GuildForgeDB.settings
   if s.scale==nil then s.scale=1 end
   if s.syncOnLogin==nil then s.syncOnLogin=true end
   if s.quiet==nil then s.quiet=false end
   if s.tooltips==nil then s.tooltips=true end
   db=tempMembers
-  recipeInfo=GuildCraftDB.recipeInfo
-  selectedTab=professionIcons[GuildCraftDB.ui.tab or ''] and GuildCraftDB.ui.tab or 'All'
+  recipeInfo=GuildForgeDB.recipeInfo
+  selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
 end
 local function save()
   if not db then initDB() end
@@ -768,7 +769,7 @@ local function doRefresh()
   log('Local professions refreshed and shared.')
 end
 
--- Guild roster: who is online, when offline members were last seen, and who runs GuildCraft.
+-- Guild roster: who is online, when offline members were last seen, and who runs GuildForge.
 local function refreshRoster()
   wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers); rosterHasOffline=false
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
@@ -799,19 +800,19 @@ local function guildBucketKey()
 end
 -- Points db at the current guild's members; returns true when the guild changed.
 local function selectGuild()
-  if not GuildCraftDB or not playerName() then return false end
+  if not GuildForgeDB or not playerName() then return false end
   local bucket=guildBucketKey()
   if not bucket or bucket==currentGuild then return false end
-  GuildCraftDB.guilds[bucket]=GuildCraftDB.guilds[bucket] or {members={}}
-  local members=GuildCraftDB.guilds[bucket].members
+  GuildForgeDB.guilds[bucket]=GuildForgeDB.guilds[bucket] or {members={}}
+  local members=GuildForgeDB.guilds[bucket].members
   for k,v in pairs(tempMembers) do if not members[k] then members[k]=v end end
   wipe(tempMembers)
   -- Bring your own recipes along from the old shared list or from a guild this character left.
   local me=key()
   if not members[me] then
-    local mine=GuildCraftDB.members and GuildCraftDB.members[me]
+    local mine=GuildForgeDB.members and GuildForgeDB.members[me]
     if not mine then
-      for _,guild in pairs(GuildCraftDB.guilds) do
+      for _,guild in pairs(GuildForgeDB.guilds) do
         if guild.members and guild.members[me] then mine=guild.members[me]; break end
       end
     end
@@ -825,7 +826,7 @@ local function selectGuild()
 end
 -- Older versions kept every guild in one list; move each member into the guild whose roster has them.
 local function migrateLegacy()
-  local legacy=GuildCraftDB and GuildCraftDB.members
+  local legacy=GuildForgeDB and GuildForgeDB.members
   if type(legacy)~='table' or not currentGuild then return end
   local inGuild=IsInGuild and IsInGuild()
   if inGuild and next(guildMembers)==nil then return end
@@ -836,7 +837,7 @@ local function migrateLegacy()
       legacy[k]=nil
     end
   end
-  if next(legacy)==nil then GuildCraftDB.members=nil end
+  if next(legacy)==nil then GuildForgeDB.members=nil end
   if moved>0 then requestUpdate() end
 end
 -- Saved data keeps people who have since left the guild; only show current roster members.
@@ -871,7 +872,7 @@ local function versionLabel(id)
   if version=='' then return 'older version' end
   return 'v'..version
 end
--- Names of guildmates online with GuildCraft (you first); withVersions appends each one's version.
+-- Names of guildmates online with GuildForge (you first); withVersions appends each one's version.
 local function activeUsers(withVersions)
   local me=nameId(key())
   local list={}
@@ -1003,7 +1004,7 @@ local function craftTarget(r)
 end
 local function requestCraft(r,target)
   if not (target and SendChat) then return end
-  local message='[GuildCraft] Hi '..target.character..'! Could you craft '..(chatLinkFor(r.info and r.info.link) or r.name)..' for me?'
+  local message='[GuildForge] Hi '..target.character..'! Could you craft '..(chatLinkFor(r.info and r.info.link) or r.name)..' for me?'
   local have={}
   for _,reagent in ipairs(r.info and r.info.reagents or {}) do
     local bags=bagCount(reagent)
@@ -1019,7 +1020,7 @@ end
 -- Shopping list: recipes you plan to craft, combined into the mats you still need.
 local function shoppingKey(prof,name) return prof..'|'..name end
 local function changeShopping(prof,name,delta)
-  local list=GuildCraftDB.shopping
+  local list=GuildForgeDB.shopping
   local k=shoppingKey(prof,name)
   local qty=(list[k] or 0)+delta
   list[k]=qty>0 and qty or nil
@@ -1027,7 +1028,7 @@ local function changeShopping(prof,name,delta)
 end
 local function shoppingEntries()
   local entries={}
-  for k,qty in pairs(GuildCraftDB and GuildCraftDB.shopping or {}) do
+  for k,qty in pairs(GuildForgeDB and GuildForgeDB.shopping or {}) do
     local prof,name=k:match('^([^|]+)|(.+)$')
     if prof then entries[#entries+1]={prof=prof,name=name,qty=qty,info=recipeInfo and recipeInfo[prof] and recipeInfo[prof][name]} end
   end
@@ -1102,14 +1103,14 @@ local function addTooltipLines(tooltip,id)
   local need=needs[id] or (name and needs[name])
   if not (crafters or usedIn or need) then return end
   tooltip:AddLine(' ')
-  if crafters then tooltip:AddLine('|cffe7c483GuildCraft:|r crafted by '..shortList(crafters,4),.85,.85,.85,true) end
-  if usedIn then tooltip:AddLine('|cffe7c483GuildCraft:|r used in '..shortList(usedIn,3),.85,.85,.85,true) end
+  if crafters then tooltip:AddLine('|cffe7c483GuildForge:|r crafted by '..shortList(crafters,4),.85,.85,.85,true) end
+  if usedIn then tooltip:AddLine('|cffe7c483GuildForge:|r used in '..shortList(usedIn,3),.85,.85,.85,true) end
   if need then
     local bags=GetItemCount and GetItemCount(id) or 0
     if bags<need.need then
-      tooltip:AddLine('|cffe7c483GuildCraft:|r need '..(need.need-bags)..' more for your shopping list ('..bags..'/'..need.need..')',1,.4,.4)
+      tooltip:AddLine('|cffe7c483GuildForge:|r need '..(need.need-bags)..' more for your shopping list ('..bags..'/'..need.need..')',1,.4,.4)
     else
-      tooltip:AddLine('|cffe7c483GuildCraft:|r enough for your shopping list ('..bags..'/'..need.need..')',.4,1,.4)
+      tooltip:AddLine('|cffe7c483GuildForge:|r enough for your shopping list ('..bags..'/'..need.need..')',.4,1,.4)
     end
   end
 end
@@ -1190,7 +1191,7 @@ end
 local function professionData(prof,term)
   local crafters,recipes,byName=gather(prof)
   local filter=selectedCrafter[prof]
-  local matsOnly=GuildCraftDB and GuildCraftDB.ui.matsOnly
+  local matsOnly=GuildForgeDB and GuildForgeDB.ui.matsOnly
   local d={crafters=crafters,recipes=recipes,crafterCount=#crafters,recipeCount=#recipes,fc={},fr={},unknown={},unknownTotal=0,ready=0,filter=filter}
   for _,c in ipairs(crafters) do
     if term=='' or found(prof,term) or found(c.character,term) then d.fc[#d.fc+1]=c end
@@ -1428,8 +1429,8 @@ local function showCrafterTooltip(owner,prof,c)
   GameTooltip:AddLine(c.recipeCount..' recipes shared',.8,.8,.8)
   GameTooltip:AddLine(availabilityText(c),1,1,1)
   GameTooltip:AddLine('Data updated '..updatedLabel(c.updated),.6,.6,.6)
-  if c.isMe then GameTooltip:AddLine('GuildCraft v'..VERSION,.6,.6,.6)
-  elseif activeSeen[c.id] then GameTooltip:AddLine('GuildCraft '..versionLabel(c.id),.6,.6,.6) end
+  if c.isMe then GameTooltip:AddLine('GuildForge v'..VERSION,.6,.6,.6)
+  elseif activeSeen[c.id] then GameTooltip:AddLine('GuildForge '..versionLabel(c.id),.6,.6,.6) end
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('Click to show only their recipes',.4,.8,1)
   GameTooltip:Show()
@@ -1600,7 +1601,7 @@ update=function()
         place(rb,19,56)
       end
     else
-      addNote('|cff808080Reagents not shared yet. They appear once a crafter on GuildCraft '..VERSION..'+ opens this profession and syncs.|r',56)
+      addNote('|cff808080Reagents not shared yet. They appear once a crafter on GuildForge '..VERSION..'+ opens this profession and syncs.|r',56)
     end
     if #r.crafters>0 then
       local list={}
@@ -1619,7 +1620,7 @@ update=function()
     a.b1:SetScript('OnClick',function() releaseSearchFocus(); requestCraft(r,target) end)
     a.b2:SetText('Add to list'); a.b2:Enable(); a.b2:Show()
     a.b2:SetScript('OnClick',function() releaseSearchFocus(); changeShopping(prof,r.name,1); update() end)
-    local onList=GuildCraftDB.shopping[shoppingKey(prof,r.name)]
+    local onList=GuildForgeDB.shopping[shoppingKey(prof,r.name)]
     a.text:SetText(onList and ('On your shopping list: '..onList) or '')
     place(a,28,56)
     y=y+4
@@ -1660,7 +1661,7 @@ update=function()
     if not any then addNote('No matching professions, guild members, recipes, or reagents.',8) end
     headerIcon:SetTexture(professionIcons.All)
     headerTitle:SetText('Guild Professions')
-    headerSub:SetText(string.format('%d crafter entries  ·  %d recipes shared  ·  %d online with GuildCraft',totalCrafters,totalRecipes,#activeUsers()))
+    headerSub:SetText(string.format('%d crafter entries  ·  %d recipes shared  ·  %d online with GuildForge',totalCrafters,totalRecipes,#activeUsers()))
   elseif selected=='Shopping' then
     local entries={}
     for _,e in ipairs(shoppingEntries()) do
@@ -1718,7 +1719,7 @@ update=function()
       y=y+6
       local a=acquire('actions')
       a.b1:SetText('Clear list'); a.b1:Enable()
-      a.b1:SetScript('OnClick',function() releaseSearchFocus(); wipe(GuildCraftDB.shopping); requestUpdate(); update() end)
+      a.b1:SetScript('OnClick',function() releaseSearchFocus(); wipe(GuildForgeDB.shopping); requestUpdate(); update() end)
       a.b2:Hide()
       a.text:SetText('Item tooltips also show what you still need.')
       place(a,28,8)
@@ -1771,7 +1772,7 @@ end
 
 selectTab=function(name)
   selectedTab=name
-  if GuildCraftDB then GuildCraftDB.ui.tab=name end
+  if GuildForgeDB then GuildForgeDB.ui.tab=name end
   if scrollFrame then scrollFrame:SetVerticalScroll(0) end
   update()
 end
@@ -1800,7 +1801,7 @@ end
 
 local function setScale(value)
   value=math.max(.7,math.min(1.4,math.floor(value*20+.5)/20))
-  GuildCraftDB.settings.scale=value
+  GuildForgeDB.settings.scale=value
   if window then window:SetScale(value) end
   return value
 end
@@ -1827,26 +1828,26 @@ local function makeSettingsPanel(f,inset)
     checks[#checks+1]=c
     y=y-44
   end
-  check('Show minimap button','Left-click opens GuildCraft, right-click syncs. Also /guildcraft minimap.',
-    function() return not GuildCraftDB.minimap.hide end,
-    function(v) GuildCraftDB.minimap.hide=not v; if minimapButton then minimapButton:SetShown(v) end end)
-  check('Show GuildCraft info in item tooltips','Who crafts an item, which recipes use it, and shopping-list needs.',
-    function() return GuildCraftDB.settings.tooltips end,
-    function(v) GuildCraftDB.settings.tooltips=v end)
+  check('Show minimap button','Left-click opens GuildForge, right-click syncs. Also /guildforge minimap.',
+    function() return not GuildForgeDB.minimap.hide end,
+    function(v) GuildForgeDB.minimap.hide=not v; if minimapButton then minimapButton:SetShown(v) end end)
+  check('Show GuildForge info in item tooltips','Who crafts an item, which recipes use it, and shopping-list needs.',
+    function() return GuildForgeDB.settings.tooltips end,
+    function(v) GuildForgeDB.settings.tooltips=v end)
   check('Sync with the guild when you log in','Sends your professions and asks guildmates for changed recipe lists.',
-    function() return GuildCraftDB.settings.syncOnLogin end,
-    function(v) GuildCraftDB.settings.syncOnLogin=v end)
+    function() return GuildForgeDB.settings.syncOnLogin end,
+    function(v) GuildForgeDB.settings.syncOnLogin=v end)
   check('Quiet mode','Hide routine chat messages such as scans and sync notices.',
-    function() return GuildCraftDB.settings.quiet end,
-    function(v) GuildCraftDB.settings.quiet=v end)
+    function() return GuildForgeDB.settings.quiet end,
+    function(v) GuildForgeDB.settings.quiet=v end)
 
   local scaleLabel=panel:CreateFontString(nil,'OVERLAY','GameFontHighlight'); scaleLabel:SetPoint('TOPLEFT',22,y-6); scaleLabel:SetText('Window scale')
   local minus=smallButton(panel,'-',26); minus:SetPoint('LEFT',scaleLabel,'RIGHT',14,0)
   local value=panel:CreateFontString(nil,'OVERLAY','GameFontNormal'); value:SetPoint('LEFT',minus,'RIGHT',8,0); value:SetWidth(44)
   local plus=smallButton(panel,'+',26); plus:SetPoint('LEFT',value,'RIGHT',8,0)
-  local function showScale() value:SetText(math.floor(GuildCraftDB.settings.scale*100+.5)..'%') end
-  minus:SetScript('OnClick',function() setScale(GuildCraftDB.settings.scale-.05); showScale() end)
-  plus:SetScript('OnClick',function() setScale(GuildCraftDB.settings.scale+.05); showScale() end)
+  local function showScale() value:SetText(math.floor(GuildForgeDB.settings.scale*100+.5)..'%') end
+  minus:SetScript('OnClick',function() setScale(GuildForgeDB.settings.scale-.05); showScale() end)
+  plus:SetScript('OnClick',function() setScale(GuildForgeDB.settings.scale+.05); showScale() end)
   y=y-48
 
   local push=smallButton(panel,'Re-share all my recipes',180); push:SetPoint('TOPLEFT',22,y)
@@ -1855,7 +1856,7 @@ local function makeSettingsPanel(f,inset)
   pushHint:SetText('Normal syncs only send lists that changed; use this if someone is missing yours.')
   y=y-36
   local clear=smallButton(panel,'Clear my data',180); clear:SetPoint('TOPLEFT',22,y)
-  clear:SetScript('OnClick',function() StaticPopup_Show('GUILDCRAFT_CLEAR') end)
+  clear:SetScript('OnClick',function() StaticPopup_Show('GUILDFORGE_CLEAR') end)
   local clearHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); clearHint:SetPoint('LEFT',clear,'RIGHT',10,0)
   clearHint:SetText('Forget what you have received from guildmates and download it again fresh.')
   local done=smallButton(panel,'Done',90); done:SetPoint('BOTTOMRIGHT',-16,14)
@@ -1868,23 +1869,23 @@ local function makeSettingsPanel(f,inset)
 end
 
 local function makeWindow()
-  local f=CreateFrame('Frame','GuildCraftWindow',UIParent,BACKDROP_TEMPLATE)
+  local f=CreateFrame('Frame','GuildForgeWindow',UIParent,BACKDROP_TEMPLATE)
   window=f
   f:SetSize(720,560); f:SetPoint('CENTER'); f:SetFrameStrata('DIALOG'); f:SetToplevel(true)
   f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag('LeftButton'); f:SetClampedToScreen(true)
   f:SetScript('OnDragStart',f.StartMoving); f:SetScript('OnDragStop',f.StopMovingOrSizing)
-  f:SetScale(GuildCraftDB.settings.scale or 1)
+  f:SetScale(GuildForgeDB.settings.scale or 1)
   if f.SetBackdrop then
     f:SetBackdrop({bgFile='Interface\\DialogFrame\\UI-DialogBox-Background',edgeFile='Interface\\DialogFrame\\UI-DialogBox-Border',tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}})
   end
   local tint=f:CreateTexture(nil,'BACKGROUND',nil,1)
   tint:SetPoint('TOPLEFT',11,-12); tint:SetPoint('BOTTOMRIGHT',-12,11); tint:SetColorTexture(.16,.11,.06,.55)
-  tinsert(UISpecialFrames,'GuildCraftWindow')
+  tinsert(UISpecialFrames,'GuildForgeWindow')
 
   local banner=f:CreateTexture(nil,'ARTWORK')
   banner:SetTexture('Interface\\DialogFrame\\UI-DialogBox-Header'); banner:SetSize(320,64); banner:SetPoint('TOP',0,12)
   local title=f:CreateFontString(nil,'OVERLAY','GameFontNormal')
-  title:SetPoint('TOP',banner,'TOP',0,-14); title:SetText('GuildCraft  |cffa89c84v'..VERSION..'|r')
+  title:SetPoint('TOP',banner,'TOP',0,-14); title:SetText('GuildForge  |cffa89c84v'..VERSION..'|r')
   local close=CreateFrame('Button',nil,f,'UIPanelCloseButton')
   close:SetPoint('TOPRIGHT',-6,-6)
 
@@ -1918,10 +1919,10 @@ local function makeWindow()
 
   matsCheck=CreateFrame('CheckButton',nil,f,'UICheckButtonTemplate')
   matsCheck:SetSize(24,24); matsCheck:SetPoint('LEFT',searchBox,'RIGHT',8,0)
-  matsCheck:SetChecked(GuildCraftDB.ui.matsOnly)
+  matsCheck:SetChecked(GuildForgeDB.ui.matsOnly)
   local matsLabel=f:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall')
   matsLabel:SetPoint('LEFT',matsCheck,'RIGHT',0,1); matsLabel:SetText('Have mats')
-  matsCheck:SetScript('OnClick',function(self) releaseSearchFocus(); GuildCraftDB.ui.matsOnly=self:GetChecked() and true or false; update() end)
+  matsCheck:SetScript('OnClick',function(self) releaseSearchFocus(); GuildForgeDB.ui.matsOnly=self:GetChecked() and true or false; update() end)
   matsCheck:SetScript('OnEnter',function(self)
     GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine('Only show recipes you have the reagents for in your bags',1,1,1,true); GameTooltip:Show()
   end)
@@ -1935,7 +1936,7 @@ local function makeWindow()
 
   local inset=CreateFrame('Frame',nil,f,BACKDROP_TEMPLATE)
   inset:SetPoint('TOPLEFT',16,-120); inset:SetPoint('BOTTOMRIGHT',-16,36); skin(inset,.75,.55,.45,.28)
-  scrollFrame=CreateFrame('ScrollFrame','GuildCraftScrollFrame',inset,'UIPanelScrollFrameTemplate')
+  scrollFrame=CreateFrame('ScrollFrame','GuildForgeScrollFrame',inset,'UIPanelScrollFrameTemplate')
   scrollFrame:SetPoint('TOPLEFT',8,-8); scrollFrame:SetPoint('BOTTOMRIGHT',-30,8)
   scrollFrame:SetScript('OnMouseDown',releaseSearchFocus)
   scrollContent=CreateFrame('Frame',nil,scrollFrame); scrollContent:SetSize(CONTENT_W,100)
@@ -1973,36 +1974,36 @@ end
 local function registerOptions()
   if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
   local panel=CreateFrame('Frame')
-  local title=panel:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',16,-16); title:SetText('GuildCraft')
+  local title=panel:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',16,-16); title:SetText('GuildForge')
   local text=panel:CreateFontString(nil,'OVERLAY','GameFontHighlight'); text:SetPoint('TOPLEFT',title,'BOTTOMLEFT',0,-8)
-  text:SetText('Settings live in the GuildCraft window. You can also use the GC minimap button or /guildcraft.')
+  text:SetText('Settings live in the GuildForge window. You can also use the GF minimap button or /guildforge.')
   local open=CreateFrame('Button',nil,panel,'UIPanelButtonTemplate')
-  open:SetSize(200,24); open:SetPoint('TOPLEFT',text,'BOTTOMLEFT',0,-12); open:SetText('Open GuildCraft settings')
+  open:SetSize(200,24); open:SetPoint('TOPLEFT',text,'BOTTOMLEFT',0,-12); open:SetText('Open GuildForge settings')
   open:SetScript('OnClick',function()
     if SettingsPanel and HideUIPanel then HideUIPanel(SettingsPanel) end
     openSettings()
   end)
-  Settings.RegisterAddOnCategory(Settings.RegisterCanvasLayoutCategory(panel,'GuildCraft'))
+  Settings.RegisterAddOnCategory(Settings.RegisterCanvasLayoutCategory(panel,'GuildForge'))
 end
 
--- Minimap button: a "GC" bubble with a badge counting guildmates online with GuildCraft.
+-- Minimap button: a "GF" bubble with a badge counting guildmates online with GuildForge.
 local function positionMinimap()
-  local angle=math.rad(GuildCraftDB.minimap.angle or 200)
+  local angle=math.rad(GuildForgeDB.minimap.angle or 200)
   local radius=(Minimap:GetWidth()/2)+10
   minimapButton:ClearAllPoints()
   minimapButton:SetPoint('CENTER',Minimap,'CENTER',math.cos(angle)*radius,math.sin(angle)*radius)
 end
 local function showMinimapTooltip(self)
   GameTooltip:SetOwner(self,'ANCHOR_LEFT')
-  GameTooltip:AddLine('GuildCraft',1,.82,0)
+  GameTooltip:AddLine('GuildForge',1,.82,0)
   local users=activeUsers(true)
-  GameTooltip:AddLine(#users..' online with GuildCraft',1,1,1)
+  GameTooltip:AddLine(#users..' online with GuildForge',1,1,1)
   for i=1,math.min(#users,15) do GameTooltip:AddLine('   '..users[i],.55,.9,.55) end
   if #users>15 then GameTooltip:AddLine('   and '..(#users-15)..' more',.6,.6,.6) end
   local _,ready=gatherCooldowns(nil,'')
   if ready>0 then GameTooltip:AddLine(ready..' profession cooldown'..(ready==1 and '' or 's')..' ready',.4,1,.4) end
   GameTooltip:AddLine(' ')
-  GameTooltip:AddLine('|cffffd100Left-click|r  open GuildCraft',.85,.85,.85)
+  GameTooltip:AddLine('|cffffd100Left-click|r  open GuildForge',.85,.85,.85)
   GameTooltip:AddLine('|cffffd100Right-click|r  sync with guild',.85,.85,.85)
   GameTooltip:AddLine('|cffffd100Drag|r  move this button',.85,.85,.85)
   GameTooltip:Show()
@@ -2013,7 +2014,7 @@ refreshMinimap=function()
   if GameTooltip:IsOwned(minimapButton) then showMinimapTooltip(minimapButton) end
 end
 local function makeMinimapButton()
-  local b=CreateFrame('Button','GuildCraftMinimapButton',Minimap)
+  local b=CreateFrame('Button','GuildForgeMinimapButton',Minimap)
   minimapButton=b
   b:SetSize(31,31); b:SetFrameStrata('MEDIUM'); b:SetFrameLevel(8)
   b:RegisterForClicks('LeftButtonUp','RightButtonUp'); b:RegisterForDrag('LeftButton')
@@ -2025,7 +2026,7 @@ local function makeMinimapButton()
   border:SetTexture('Interface\\Minimap\\MiniMap-TrackingBorder'); border:SetSize(53,53); border:SetPoint('TOPLEFT')
   local text=b:CreateFontString(nil,'ARTWORK')
   text:SetFont('Fonts\\FRIZQT__.TTF',10,'OUTLINE'); text:SetPoint('CENTER',bg,'CENTER',0,0)
-  text:SetTextColor(1,.82,0); text:SetText('GC')
+  text:SetTextColor(1,.82,0); text:SetText('GF')
   local badge=CreateFrame('Frame',nil,b)
   badge:SetSize(15,15); badge:SetPoint('CENTER',b,'TOPLEFT',28,-26); badge:SetFrameLevel(b:GetFrameLevel()+2)
   local badgeBg=badge:CreateTexture(nil,'ARTWORK')
@@ -2040,42 +2041,43 @@ local function makeMinimapButton()
       local mx,my=Minimap:GetCenter()
       local px,py=GetCursorPosition()
       local scale=Minimap:GetEffectiveScale()
-      GuildCraftDB.minimap.angle=math.deg(math.atan2(py/scale-my,px/scale-mx))
+      GuildForgeDB.minimap.angle=math.deg(math.atan2(py/scale-my,px/scale-mx))
       positionMinimap()
     end)
   end)
   b:SetScript('OnDragStop',function(self) self:SetScript('OnUpdate',nil) end)
   positionMinimap()
-  b:SetShown(not GuildCraftDB.minimap.hide)
+  b:SetShown(not GuildForgeDB.minimap.hide)
   refreshMinimap()
 end
 
 -- Forever/modern clients list addons in the minimap's addon compartment; the TOC points here.
-function GuildCraft_OnAddonCompartmentClick(_,mouse)
+function GuildForge_OnAddonCompartmentClick(_,mouse)
   if mouse=='RightButton' then doSync() else toggle() end
 end
-SLASH_GUILDCRAFT1='/guildcraft'; SLASH_GUILDCRAFT2='/gcraft'; SLASH_GUILDCRAFT3='/guildprof'
-SlashCmdList['GUILDCRAFT']=function(message)
+-- /guildcraft stays as an alias for people used to the old name.
+SLASH_GUILDFORGE1='/guildforge'; SLASH_GUILDFORGE2='/gforge'; SLASH_GUILDFORGE3='/guildprof'; SLASH_GUILDFORGE4='/guildcraft'
+SlashCmdList['GUILDFORGE']=function(message)
   message=(message or ''):lower():match('^%s*(.-)%s*$')
   if message=='status' then
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
     log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d',recipeReceived,recipeSent,#recipeQueue,droppedMessages),true)
-  elseif message=='clear' then StaticPopup_Show('GUILDCRAFT_CLEAR')
+  elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)
-    log(#users..' online with GuildCraft:',true)
+    log(#users..' online with GuildForge:',true)
     for _,line in ipairs(users) do log('   '..line,true) end
   elseif message=='sync' then doSync()
   elseif message=='push' then doPush()
   elseif message=='refresh' then doRefresh()
   elseif message=='config' or message=='settings' or message=='options' then openSettings()
   elseif message=='minimap' then
-    GuildCraftDB.minimap.hide=not GuildCraftDB.minimap.hide
-    if minimapButton then minimapButton:SetShown(not GuildCraftDB.minimap.hide) end
-    log('Minimap button '..(GuildCraftDB.minimap.hide and 'hidden' or 'shown')..'.',true)
+    GuildForgeDB.minimap.hide=not GuildForgeDB.minimap.hide
+    if minimapButton then minimapButton:SetShown(not GuildForgeDB.minimap.hide) end
+    log('Minimap button '..(GuildForgeDB.minimap.hide and 'hidden' or 'shown')..'.',true)
   elseif message=='help' then
-    log('/guildcraft opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters.',true)
+    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters.',true)
   else toggle() end
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
@@ -2101,17 +2103,17 @@ clearMyData=function()
     if mine then db[me]=mine end
   end
   wipe(tempMembers); wipe(recipePending); wipe(pullRequestedAt); wipe(selectedCrafter); wipe(cdStampSeen)
-  GuildCraftDB.members=nil
+  GuildForgeDB.members=nil
   for _,list in pairs(recipeInfo or {}) do
     for name,info in pairs(list) do
       if type(info)~='table' or info.remote then list[name]=nil end
     end
   end
-  log('Cleared your GuildCraft data. Downloading fresh data from the guild...',true)
+  log('Cleared your GuildForge data. Downloading fresh data from the guild...',true)
   doSync()
 end
-StaticPopupDialogs['GUILDCRAFT_CLEAR']={
-  text='Clear your GuildCraft data?\n\nEverything received from guildmates is removed and downloaded again. Your own professions and recipes are kept.',
+StaticPopupDialogs['GUILDFORGE_CLEAR']={
+  text='Clear your GuildForge data?\n\nEverything received from guildmates is removed and downloaded again. Your own professions and recipes are kept.',
   button1=YES, button2=NO,
   OnAccept=function() clearMyData() end,
   timeout=0, whileDead=true, hideOnEscape=true,
@@ -2125,13 +2127,13 @@ frame:SetScript('OnEvent',function(_,event,...)
     registerOptions()
     hookTooltips()
     requestRoster()
-    log('v'..VERSION..' loaded. Click the GC minimap button or type /guildcraft to open.')
+    log('v'..VERSION..' loaded. Click the GF minimap button or type /guildforge to open.')
     -- Probe first so our name matches what guildmates see before the real sync goes out.
     later(2,function() addonSend('V|'..key()..'|'..VERSION) end)
     later(5,function()
       syncReady=true
       checkCooldowns()
-      if GuildCraftDB.settings.syncOnLogin then rollCall(true) else sendSummary() end
+      if GuildForgeDB.settings.syncOnLogin then rollCall(true) else sendSummary() end
     end)
   elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
     if not scanScheduled then scanScheduled=true; later(0.3,scanRecipes) end
@@ -2212,4 +2214,4 @@ frame:SetScript('OnUpdate',function(_,elapsed)
     requestRedraw()
   end
 end)
-print('|cff00ff00GuildCraft: v'..VERSION..' Lua loaded; slash commands registered.|r')
+print('|cff00ff00GuildForge: v'..VERSION..' Lua loaded; slash commands registered.|r')

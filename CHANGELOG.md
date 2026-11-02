@@ -1,14 +1,15 @@
 # Changelog
 
-All notable changes to GuildCraft are listed here.
+All notable changes to GuildForge are listed here.
 
 ## [0.14.0] - 2026-11-02
 
 ### Added
-- **Clear my data** in Settings (and `/guildcraft clear`): forget everything received from guildmates and download it again fresh. Your own professions and recipes are kept.
-- **Built for WoW Forever:** separate Forever and Classic Era TOCs, and a GuildCraft entry in Esc → Options → AddOns.
+- **Clear my data** in Settings (and `/guildforge clear`): forget everything received from guildmates and download it again fresh. Your own professions and recipes are kept.
+- **Built for WoW Forever:** separate Forever and Classic Era TOCs, and a GuildForge entry in Esc → Options → AddOns.
 
 ### Changed
+- **Renamed to GuildForge.** The window, minimap button (now "GF"), commands (`/guildforge`, `/gforge`; `/guildcraft` still works) and saved data all use the new name. Data saved under the old name isn't carried over: guildmates' data downloads again on the first sync, and opening each profession once re-shares your own recipes.
 - **Much lighter syncing for big guilds.** Logging in or pressing Sync now sends one short summary per player instead of everyone re-sending their professions. Guildmates only send the pieces that actually changed, and replies are spread out over a few seconds.
 - People who leave the guild are removed from your saved data, not just hidden.
 - Item tooltips and the All tab do less work, so they stay smooth during big syncs.
@@ -21,7 +22,7 @@ All notable changes to GuildCraft are listed here.
 
 ### Added
 - **Not known in guild** is shared with the whole guild: any member's trainer visits fill in everyone's list.
-- Each guildmate's GuildCraft version in crafter and minimap tooltips, plus `/guildcraft who`.
+- Each guildmate's GuildForge version in crafter and minimap tooltips, plus `/guildforge who`.
 - Data is kept separately for each guild, so alts in other guilds don't mix.
 - Support for WoW: Forever first and last names, and for same-named characters on different realms.
 
@@ -52,4 +53,4 @@ All notable changes to GuildCraft are listed here.
 ### Added
 - WoW-styled window with profession tabs and icons down the right side.
 - Recipe icons, reagents and your bag and bank counts, with a **Have mats** filter.
-- GC minimap button with a count of guildmates online with GuildCraft.
+- GF minimap button with a count of guildmates online with GuildForge.
