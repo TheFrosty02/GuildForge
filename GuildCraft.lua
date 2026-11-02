@@ -1,6 +1,10 @@
--- GuildCraft 0.12.0 - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
+-- GuildCraft - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
 -- craft requests, shopping list, item tooltips, cooldowns, learnable recipes, summary-based syncing, settings
-local VERSION='0.14.0'
+-- The release packager writes the git tag into the TOC; an unpackaged checkout still shows the placeholder.
+local GetMetadata=(C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+local VERSION=GetMetadata and GetMetadata('GuildCraft','Version')
+if type(VERSION)~='string' or VERSION:find('@',1,true) then VERSION='dev' end
+VERSION=VERSION:gsub('^v','')
 local PREFIX='GCRFT96' -- preserve working profession sync protocol
 local RECIPE_PREFIX='GCRFT10'
 local frame=CreateFrame('Frame')
@@ -214,10 +218,26 @@ local function save()
   local previous=db[name] or {}
   db[name]={professions=scan(),updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {},cdStamp=previous.cdStamp}
 end
+-- WoW: Forever (Midnight-era API) blocks outgoing addon messages in some situations, such as combat in
+-- instances. Messages wait until the lockdown lifts instead of failing and being dropped.
+local function messagingBlocked()
+  local C=C_ChatInfo
+  if not C then return false end
+  for _,check in ipairs({C.AreOutgoingAddonChatMessagesRestricted,C.InChatMessagingLockdown}) do
+    local blocked=check and check()
+    if blocked and not isSecret(blocked) then return true end
+  end
+  return false
+end
+local heldMessages={}
 local function addonSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false end
+  if messagingBlocked() then
+    if #heldMessages<50 then heldMessages[#heldMessages+1]=payload end
+    return false
+  end
   fn(PREFIX,payload,'GUILD')
   sent=sent+1
   return true
@@ -1949,6 +1969,21 @@ local function openSettings()
   if not window:IsShown() then save(); window:Show(); update() end
   window.settingsPanel:Show()
 end
+-- Esc > Options > AddOns entry on clients with the modern Settings panel (WoW: Forever).
+local function registerOptions()
+  if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
+  local panel=CreateFrame('Frame')
+  local title=panel:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',16,-16); title:SetText('GuildCraft')
+  local text=panel:CreateFontString(nil,'OVERLAY','GameFontHighlight'); text:SetPoint('TOPLEFT',title,'BOTTOMLEFT',0,-8)
+  text:SetText('Settings live in the GuildCraft window. You can also use the GC minimap button or /guildcraft.')
+  local open=CreateFrame('Button',nil,panel,'UIPanelButtonTemplate')
+  open:SetSize(200,24); open:SetPoint('TOPLEFT',text,'BOTTOMLEFT',0,-12); open:SetText('Open GuildCraft settings')
+  open:SetScript('OnClick',function()
+    if SettingsPanel and HideUIPanel then HideUIPanel(SettingsPanel) end
+    openSettings()
+  end)
+  Settings.RegisterAddOnCategory(Settings.RegisterCanvasLayoutCategory(panel,'GuildCraft'))
+end
 
 -- Minimap button: a "GC" bubble with a badge counting guildmates online with GuildCraft.
 local function positionMinimap()
@@ -2087,6 +2122,7 @@ frame:SetScript('OnEvent',function(_,event,...)
     local register=(C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
     if register then register(PREFIX); register(RECIPE_PREFIX) end
     makeMinimapButton()
+    registerOptions()
     hookTooltips()
     requestRoster()
     log('v'..VERSION..' loaded. Click the GC minimap button or type /guildcraft to open.')
@@ -2144,7 +2180,12 @@ frame:SetScript('OnEvent',function(_,event,...)
   end
 end)
 frame:SetScript('OnUpdate',function(_,elapsed)
-  if #recipeQueue>0 and now()~=0 then
+  local blocked=(#recipeQueue>0 or #heldMessages>0) and messagingBlocked()
+  if #heldMessages>0 and not blocked then
+    local held=heldMessages; heldMessages={}
+    for _,payload in ipairs(held) do addonSend(payload) end
+  end
+  if #recipeQueue>0 and now()~=0 and not blocked then
     lastRecipeSend=lastRecipeSend+elapsed
     if lastRecipeSend>=0.25 then
       lastRecipeSend=0
