@@ -3,6 +3,7 @@
 ## Notes: Guild professions, recipes with reagents, craft requests, shopping list, cooldowns and item tooltips
 ## Author: TheFrosty02, Kota150
 ## Version: @project-version@
+## X-Curse-Project-ID: 1780823
 ## SavedVariables: GuildForgeDB
 ## IconTexture: Interface\Icons\Trade_BlackSmithing
 
