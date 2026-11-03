@@ -2,10 +2,15 @@
 
 All notable changes to GuildForge are listed here.
 
-## [1.0.1] - 2026-11-02
+## [1.0.2] - 2026-11-02
 
 ### Changed
 - The window title now just says **GuildForge**; the version number moved to the bottom of the Settings panel.
+
+## [1.0.1] - 2026-11-02
+
+### Changed
+- Re-release of 1.0.0 with no changes to the addon.
 
 ## [1.0.0] - 2026-11-02
 
