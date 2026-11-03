@@ -1,10 +1,19 @@
 -- GuildForge - Classic Era + WoW: Forever; WoW-styled window, profession tabs, recipe reagents,
 -- craft requests, shopping list, item tooltips, cooldowns, learnable recipes, summary-based syncing, settings
 -- The release packager writes the git tag into the TOC; an unpackaged checkout still shows the placeholder.
+-- Look the addon up by the folder WoW loaded it from: the modern lookup errors on an unknown name,
+-- and an error here would stop the whole file (commands and minimap button included).
+local addonName=...
 local GetMetadata=(C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
-local VERSION=GetMetadata and GetMetadata('GuildForge','Version')
+local VERSION
+if GetMetadata and type(addonName)=='string' then
+  local ok,value=pcall(GetMetadata,addonName,'Version')
+  if ok then VERSION=value end
+end
 if type(VERSION)~='string' or VERSION:find('@',1,true) then VERSION='dev' end
 VERSION=VERSION:gsub('^v','')
+-- Helper functions live in one table: WoW's Lua allows at most 200 locals at the top of a file.
+local GF={}
 -- Hidden guild addon-message channels: professions and roll calls, and recipe data.
 local PREFIX='GFORGE'
 local RECIPE_PREFIX='GFORGE_R'
@@ -59,11 +68,11 @@ local InsertChatLink=(ChatFrameUtil and ChatFrameUtil.InsertLink) or ChatEdit_In
 local SendChat=(C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
 -- Midnight "secret values" can't be indexed or compared; treat them as unknown instead of erroring.
 local function isSecret(value) return type(issecretvalue)=='function' and issecretvalue(value) end
-local function spellName(id)
+function GF.spellName(id)
   if C_Spell and C_Spell.GetSpellName then return C_Spell.GetSpellName(id) end
   return GetSpellInfo and (GetSpellInfo(id))
 end
-local function spellCooldown(id)
+function GF.spellCooldown(id)
   if C_Spell and C_Spell.GetSpellCooldown then
     local cd=C_Spell.GetSpellCooldown(id)
     if type(cd)=='table' then return cd.startTime,cd.duration end
@@ -71,11 +80,11 @@ local function spellCooldown(id)
   end
   if GetSpellCooldown then return GetSpellCooldown(id) end
 end
-local function itemCooldown(id)
+function GF.itemCooldown(id)
   local fn=(C_Container and C_Container.GetItemCooldown) or GetItemCooldown
   if fn then return fn(id) end
 end
-local function knowsSpell(id)
+function GF.knowsSpell(id)
   if IsPlayerSpell then return IsPlayerSpell(id) end
   return IsSpellKnown and IsSpellKnown(id)
 end
@@ -104,7 +113,7 @@ end
 local function realm() return (GetRealmName and GetRealmName()) or 'Unknown' end
 local cachedPlayer
 -- WoW: Forever adds surnames, and UnitName may not match the name other players see on our messages.
--- learnOwnName() records the name the server puts on our own messages, keyed by UnitName.
+-- GF.learnOwnName() records the name the server puts on our own messages, keyed by UnitName.
 local function playerName()
   if cachedPlayer then return cachedPlayer end
   local name=UnitName('player')
@@ -147,7 +156,7 @@ local function displayName(name)
   return character..'-'..server:gsub('%s','')
 end
 -- Our own guild addon messages echo back with the sender name the server uses for us.
-local function learnOwnName(sender)
+function GF.learnOwnName(sender)
   local character=splitName(sender)
   local base=UnitName('player')
   if not character or character==cachedPlayer or not base or isSecret(base) then return end
@@ -194,7 +203,7 @@ local function scan()
   table.sort(list,function(a,b) return a.name<b.name end)
   return list
 end
-local function initDB()
+function GF.initDB()
   GuildForgeDB=GuildForgeDB or {}
   GuildForgeDB.guilds=GuildForgeDB.guilds or {}
   -- Recipe details (crafted item + reagents) are shared by name, independent of who knows them.
@@ -213,7 +222,7 @@ local function initDB()
   selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
 end
 local function save()
-  if not db then initDB() end
+  if not db then GF.initDB() end
   if not playerName() or db==tempMembers then return end
   local name=key()
   local previous=db[name] or {}
@@ -221,7 +230,7 @@ local function save()
 end
 -- WoW: Forever (Midnight-era API) blocks outgoing addon messages in some situations, such as combat in
 -- instances. Messages wait until the lockdown lifts instead of failing and being dropped.
-local function messagingBlocked()
+function GF.messagingBlocked()
   local C=C_ChatInfo
   if not C then return false end
   for _,check in ipairs({C.AreOutgoingAddonChatMessagesRestricted,C.InChatMessagingLockdown}) do
@@ -235,7 +244,7 @@ local function addonSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false end
-  if messagingBlocked() then
+  if GF.messagingBlocked() then
     if #heldMessages<50 then heldMessages[#heldMessages+1]=payload end
     return false
   end
@@ -261,7 +270,7 @@ local function announce(force)
   lastBroadcast=t
 end
 local pending={}
-local function parseMessage(message,sender)
+function GF.parseMessage(message,sender)
   if type(message)~='string' then return end
   local action,who,extra=message:match('^([^|]+)|([^|]+)|?(.*)$')
   if not action or not who or who==key() then return end
@@ -307,7 +316,7 @@ local function listHash(list)
   end
   return h
 end
-local function recipeSend(payload)
+function GF.recipeSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false end
@@ -318,7 +327,7 @@ local function recipeSend(payload)
   return true
 end
 -- Format: D|who|prof|name~i12345 (or e7418 for enchants)~itemID:count,itemID:count
-local function detailPayload(who,prof,name)
+function GF.detailPayload(who,prof,name)
   local info=recipeInfo and recipeInfo[prof] and recipeInfo[prof][name]
   if not info then return nil end
   local parts={}
@@ -342,17 +351,17 @@ queueRecipes=function(prof,force)
   end
   recipeQueue[#recipeQueue+1]='E|'..who..'|'..prof
   for _,name in ipairs(entries) do
-    local detail=detailPayload(who,prof,name)
+    local detail=GF.detailPayload(who,prof,name)
     if detail then recipeQueue[#recipeQueue+1]=detail end
   end
 end
-local function shareAllRecipes()
+function GF.shareAllRecipes()
   local mine=db and db[key()]
   if not mine or not mine.recipes then return end
   for prof in pairs(mine.recipes) do if craftable[prof] then queueRecipes(prof) end end
 end
 -- Recipes catalogued from trainers (or unlearned on Forever) that this client knows about.
-local function catalogList(prof)
+function GF.catalogList(prof)
   local list={}
   for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
     if type(info)=='table' and info.source then list[#list+1]=name end
@@ -361,10 +370,10 @@ local function catalogList(prof)
   return list
 end
 local catalogQueuedAt={}
-local function queueCatalog(prof)
+function GF.queueCatalog(prof)
   if catalogQueuedAt[prof] and now()-catalogQueuedAt[prof]<30 then return end
   catalogQueuedAt[prof]=now()
-  for _,name in ipairs(catalogList(prof)) do
+  for _,name in ipairs(GF.catalogList(prof)) do
     local info=recipeInfo[prof][name]
     local payload='T|'..key()..'|'..prof..'|'..clean(name)..'~'..(info.req or '')..'~'..(info.link or '')
     if #payload<=250 then recipeQueue[#recipeQueue+1]=payload end
@@ -372,7 +381,7 @@ local function queueCatalog(prof)
 end
 -- Roll call: one S message per player fingerprints their professions, recipe lists, cooldowns and catalog.
 -- S|who|version;p<professions>;c<cooldown stamp>;k<catalog>;<profIndex>:<count>:<hash>;...
-local function professionHash(list)
+function GF.professionHash(list)
   local parts={}
   for _,p in ipairs(type(list)=='table' and list or {}) do
     parts[#parts+1]=tostring(p.name)..':'..tostring(p.rank)..':'..tostring(p.max)
@@ -380,10 +389,10 @@ local function professionHash(list)
   table.sort(parts)
   return listHash(parts)
 end
-local function catalogHash()
+function GF.catalogHash()
   local all={}
   for prof in pairs(craftable) do
-    for _,name in ipairs(catalogList(prof)) do all[#all+1]=prof..'|'..name end
+    for _,name in ipairs(GF.catalogList(prof)) do all[#all+1]=prof..'|'..name end
   end
   table.sort(all)
   return #all>0 and listHash(all) or 0
@@ -391,7 +400,7 @@ end
 local function sendSummary()
   local mine=db and db[key()]
   if not mine then return end
-  local parts={VERSION,'p'..professionHash(mine.professions),'c'..(mine.cdStamp or 0),'k'..catalogHash()}
+  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'k'..GF.catalogHash()}
   for index,prof in ipairs(professions) do
     local list=mine.recipes and mine.recipes[prof]
     if craftable[prof] and type(list)=='table' and #list>0 then
@@ -401,7 +410,7 @@ local function sendSummary()
   local payload='S|'..key()..'|'..table.concat(parts,';')
   if #payload<=250 then addonSend(payload) end
 end
-local function recentlyAsked(askKey,seconds)
+function GF.recentlyAsked(askKey,seconds)
   if pullRequestedAt[askKey] and now()-pullRequestedAt[askKey]<seconds then return true end
   pullRequestedAt[askKey]=now()
   return false
@@ -416,27 +425,27 @@ handleSummary=function(who,extra)
   for token in rest:gmatch('[^;]+') do
     local kind,value=token:sub(1,1),token:sub(2)
     if kind=='p' then
-      if not record or professionHash(record.professions)~=tonumber(value) then wants=wants..'p' end
+      if not record or GF.professionHash(record.professions)~=tonumber(value) then wants=wants..'p' end
     elseif kind=='c' then
       local stamp=tonumber(value)
       if stamp and stamp>0 and cdStampSeen[who]~=stamp then cdStampSeen[who]=stamp; wants=wants..'c' end
     elseif kind=='k' then
       local hash=tonumber(value)
       -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
-      if hash and hash>0 and hash~=catalogHash() then wants=wants..'k' end
+      if hash and hash>0 and hash~=GF.catalogHash() then wants=wants..'k' end
     else
       local index,count,hash=token:match('^(%d+):(%d+):(%d+)$')
       local prof=index and professions[tonumber(index)]
       if prof and craftable[prof] then
         local known=record and record.recipes and record.recipes[prof]
         local current=type(known)=='table' and #known==tonumber(count) and listHash(known)==tonumber(hash)
-        if not current and not recentlyAsked(who..'|'..prof,60) then
+        if not current and not GF.recentlyAsked(who..'|'..prof,60) then
           recipeQueue[#recipeQueue+1]='G|'..key()..'|'..prof..'|'..who
         end
       end
     end
   end
-  if wants~='' and not recentlyAsked('A|'..who..'|'..wants,60) then
+  if wants~='' and not GF.recentlyAsked('A|'..who..'|'..wants,60) then
     addonSend('A|'..key()..'|'..who..'~'..wants)
   end
 end
@@ -446,11 +455,11 @@ local COOLDOWN_SPELLS={[18560]='Tailoring',[17187]='Alchemy',[11479]='Alchemy',[
   [17559]='Alchemy',[17560]='Alchemy',[17561]='Alchemy',[17562]='Alchemy',[17563]='Alchemy',[17564]='Alchemy',[17565]='Alchemy',[17566]='Alchemy'}
 local COOLDOWN_ITEMS={[15846]='Leatherworking'}
 -- Classic transmutes share one timer, so they're tracked as a single "Transmute" entry.
-local function cooldownName(name)
+function GF.cooldownName(name)
   if type(name)=='string' and name:find('^Transmute') then return 'Transmute' end
   return name
 end
-local function remainingFrom(start,duration)
+function GF.remainingFrom(start,duration)
   if isSecret(start) or isSecret(duration) then return nil end
   start,duration=tonumber(start),tonumber(duration)
   if not start or not duration or start==0 or duration<=1.5 then return 0 end
@@ -473,11 +482,11 @@ local function checkCooldowns()
   if not db then return false end
   local changed=false
   for id,prof in pairs(COOLDOWN_SPELLS) do
-    if knowsSpell(id) and setMyCooldown(cooldownName(spellName(id)),prof,remainingFrom(spellCooldown(id))) then changed=true end
+    if GF.knowsSpell(id) and setMyCooldown(GF.cooldownName(GF.spellName(id)),prof,GF.remainingFrom(GF.spellCooldown(id))) then changed=true end
   end
   for id,prof in pairs(COOLDOWN_ITEMS) do
     if (GetItemCount and GetItemCount(id) or 0)>0 then
-      if setMyCooldown(GetItemInfo(id) or 'Salt Shaker',prof,remainingFrom(itemCooldown(id))) then changed=true end
+      if setMyCooldown(GetItemInfo(id) or 'Salt Shaker',prof,GF.remainingFrom(GF.itemCooldown(id))) then changed=true end
     end
   end
   return changed
@@ -499,10 +508,10 @@ handleAsk=function(extra)
   -- announce() itself skips repeats within 15 seconds, so several askers get one broadcast.
   if wants:find('p',1,true) then announce(false) end
   if wants:find('c',1,true) and now()-cooldownsAskedAt>=30 then cooldownsAskedAt=now(); queueCooldowns() end
-  if wants:find('k',1,true) then for prof in pairs(craftable) do queueCatalog(prof) end end
+  if wants:find('k',1,true) then for prof in pairs(craftable) do GF.queueCatalog(prof) end end
 end
 
-local function receiveRecipe(msg,sender)
+function GF.receiveRecipe(msg,sender)
   if type(msg)~='string' then return end
   local action,who,prof,extra=msg:match('^([^|]+)|([^|]+)|([^|]+)|?(.*)$')
   if not action or not who or not craftable[prof] or who==key() then return end
@@ -610,15 +619,15 @@ local function commitScan(prof,recipes,warnFiltered)
   requestUpdate()
 end
 -- Records a recipe cooldown seen in the trade window; a recipe that had one and now reports none is ready.
-local function noteRecipeCooldown(prof,recipe,remaining)
-  local name=cooldownName(recipe)
+function GF.noteRecipeCooldown(prof,recipe,remaining)
+  local name=GF.cooldownName(recipe)
   local mine=db and db[key()]
   local tracked=mine and mine.cooldowns and mine.cooldowns[name]
   if (remaining and remaining>0) or tracked then
     if setMyCooldown(name,prof,remaining or 0) then queueCooldowns() end
   end
 end
-local function scanTradeSkill()
+function GF.scanTradeSkill()
   if not (GetNumTradeSkills and GetTradeSkillInfo) then return end
   local prof=GetTradeSkillLine and GetTradeSkillLine()
   if not craftable[prof] then return end
@@ -635,12 +644,12 @@ local function scanTradeSkill()
         reagents[#reagents+1]={id=itemId(reagentLink),n=tonumber(count) or 1,name=reagentName}
       end
       storeInfo(prof,recipe,linkCode(GetTradeSkillItemLink and GetTradeSkillItemLink(i)),GetTradeSkillIcon and GetTradeSkillIcon(i),reagents)
-      if GetTradeSkillCooldown then noteRecipeCooldown(prof,recipe,tonumber(GetTradeSkillCooldown(i))) end
+      if GetTradeSkillCooldown then GF.noteRecipeCooldown(prof,recipe,tonumber(GetTradeSkillCooldown(i))) end
     end
   end
   commitScan(prof,recipes,true)
 end
-local function scanCraft()
+function GF.scanCraft()
   if not (GetNumCrafts and GetCraftInfo) then return end
   local prof=GetCraftDisplaySkillLine and GetCraftDisplaySkillLine()
   if not craftable[prof] then return end
@@ -662,7 +671,7 @@ local function scanCraft()
   commitScan(prof,recipes,false)
 end
 -- WoW: Forever uses the modern profession window (C_TradeSkillUI) instead of GetTradeSkillInfo.
-local function schematicDetails(recipeID)
+function GF.schematicDetails(recipeID)
   local T=C_TradeSkillUI
   local schematic=T.GetRecipeSchematic and T.GetRecipeSchematic(recipeID,false)
   local basicReagent=Enum and Enum.CraftingReagentType and Enum.CraftingReagentType.Basic
@@ -676,7 +685,7 @@ local function schematicDetails(recipeID)
   local output=schematic and schematic.outputItemID
   return output and ('i'..output) or ('e'..recipeID),reagents
 end
-local function scanModernTradeSkill()
+function GF.scanModernTradeSkill()
   local T=C_TradeSkillUI
   if GetTradeSkillInfo or not (T and T.GetAllRecipeIDs and T.GetRecipeInfo) then return end
   -- Skip other players' linked or guild profession windows; only your own recipes are yours to share.
@@ -693,12 +702,12 @@ local function scanModernTradeSkill()
       seen[info.name]=true
       if info.learned then
         recipes[#recipes+1]=recipe
-        local link,reagents=schematicDetails(recipeID)
+        local link,reagents=GF.schematicDetails(recipeID)
         storeInfo(prof,recipe,link,info.icon,reagents)
-        if T.GetRecipeCooldown then noteRecipeCooldown(prof,recipe,tonumber((T.GetRecipeCooldown(recipeID)))) end
+        if T.GetRecipeCooldown then GF.noteRecipeCooldown(prof,recipe,tonumber((T.GetRecipeCooldown(recipeID)))) end
       elseif not recipeInfo[prof][recipe] then
         -- Unlearned recipes feed the "not known in guild" list.
-        local link,reagents=schematicDetails(recipeID)
+        local link,reagents=GF.schematicDetails(recipeID)
         recipeInfo[prof][recipe]={link=link,icon=info.icon,reagents=reagents,remote=true,source='Not learned'}
       end
     end
@@ -707,7 +716,7 @@ local function scanModernTradeSkill()
 end
 -- Trainers list recipes nobody may know yet; catalogue them for the "not known in guild" list.
 local RANK_UPGRADES={Apprentice=true,Journeyman=true,Expert=true,Artisan=true,Master=true}
-local function scanTrainer()
+function GF.scanTrainer()
   if not (GetNumTrainerServices and GetTrainerServiceInfo) then return end
   local added=0
   for i=1,GetNumTrainerServices() do
@@ -740,9 +749,9 @@ end
 local scanScheduled=false
 scanRecipes=function()
   scanScheduled=false
-  scanTradeSkill()
-  scanCraft()
-  scanModernTradeSkill()
+  GF.scanTradeSkill()
+  GF.scanCraft()
+  GF.scanModernTradeSkill()
 end
 -- Sync asks for summaries; guildmates pull only the lists that differ. Older clients still get full lists.
 -- Roll call: V|who|version|r asks everyone online to reply with their one-message summary.
@@ -759,18 +768,18 @@ local function doSync()
   rollCall(true); requestUpdate()
   log('Guild sync request sent.')
 end
-local function doPush()
-  save(); fullQueuedAt={}; catalogQueuedAt={}; shareAllRecipes(); checkCooldowns(); queueCooldowns()
-  for prof in pairs(craftable) do queueCatalog(prof) end
+function GF.doPush()
+  save(); fullQueuedAt={}; catalogQueuedAt={}; GF.shareAllRecipes(); checkCooldowns(); queueCooldowns()
+  for prof in pairs(craftable) do GF.queueCatalog(prof) end
   log('Sharing all of your recipes with the guild ('..#recipeQueue..' messages queued).',true)
 end
-local function doRefresh()
+function GF.doRefresh()
   save(); announce(true); scanRecipes(); checkCooldowns(); requestUpdate()
   log('Local professions refreshed and shared.')
 end
 
 -- Guild roster: who is online, when offline members were last seen, and who runs GuildForge.
-local function refreshRoster()
+function GF.refreshRoster()
   wipe(guildOnline); wipe(guildLastSeen); wipe(guildMembers); rosterHasOffline=false
   if not (IsInGuild and IsInGuild() and GetNumGuildMembers and GetGuildRosterInfo) then return end
   for i=1,GetNumGuildMembers() do
@@ -792,7 +801,7 @@ local function refreshRoster()
     end
   end
 end
-local function guildBucketKey()
+function GF.guildBucketKey()
   if not (IsInGuild and IsInGuild()) then return 'No guild - '..realm() end
   local name=GetGuildInfo and GetGuildInfo('player')
   if not name or isSecret(name) then return nil end
@@ -801,7 +810,7 @@ end
 -- Points db at the current guild's members; returns true when the guild changed.
 local function selectGuild()
   if not GuildForgeDB or not playerName() then return false end
-  local bucket=guildBucketKey()
+  local bucket=GF.guildBucketKey()
   if not bucket or bucket==currentGuild then return false end
   GuildForgeDB.guilds[bucket]=GuildForgeDB.guilds[bucket] or {members={}}
   local members=GuildForgeDB.guilds[bucket].members
@@ -825,7 +834,7 @@ local function selectGuild()
   return true
 end
 -- Older versions kept every guild in one list; move each member into the guild whose roster has them.
-local function migrateLegacy()
+function GF.migrateLegacy()
   local legacy=GuildForgeDB and GuildForgeDB.members
   if type(legacy)~='table' or not currentGuild then return end
   local inGuild=IsInGuild and IsInGuild()
@@ -842,11 +851,11 @@ local function migrateLegacy()
 end
 -- Saved data keeps people who have since left the guild; only show current roster members.
 -- The roster is only trusted when it's known to include offline members ("Show Offline" on, or offline entries seen).
-local function rosterComplete()
+function GF.rosterComplete()
   return next(guildMembers)~=nil and (rosterHasOffline or (GetGuildRosterShowOffline and GetGuildRosterShowOffline()))
 end
 local function currentMembers()
-  if not db or not rosterComplete() then return db or {} end
+  if not db or not GF.rosterComplete() then return db or {} end
   local me=key()
   local list={}
   for who,record in pairs(db) do
@@ -855,8 +864,8 @@ local function currentMembers()
   return list
 end
 -- Deletes saved records for people who have left the guild.
-local function pruneFormerMembers()
-  if not db or db==tempMembers or not rosterComplete() then return end
+function GF.pruneFormerMembers()
+  if not db or db==tempMembers or not GF.rosterComplete() then return end
   local me=key()
   for who in pairs(db) do
     if who~=me and not guildMembers[nameId(who)] then db[who]=nil end
@@ -866,7 +875,7 @@ local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
   elseif GuildRoster then GuildRoster() end
 end
-local function versionLabel(id)
+function GF.versionLabel(id)
   local version=addonVersions[id]
   if version==nil then return 'version unknown' end
   if version=='' then return 'older version' end
@@ -879,52 +888,52 @@ local function activeUsers(withVersions)
   local rosterKnown=next(guildOnline)~=nil
   for id,name in pairs(activeSeen) do
     if id~=me and (not rosterKnown or guildOnline[id]) then
-      list[#list+1]=withVersions and (name..'  |cff909090'..versionLabel(id)..'|r') or name
+      list[#list+1]=withVersions and (name..'  |cff909090'..GF.versionLabel(id)..'|r') or name
     end
   end
   table.sort(list)
   table.insert(list,1,(playerName() or 'You')..(withVersions and ('  |cff909090v'..VERSION..'|r') or ''))
   return list
 end
-local function markSeen(who)
+function GF.markSeen(who)
   local id=nameId(who)
   if id and not activeSeen[id] then activeSeen[id]=displayName(who); if refreshMinimap then refreshMinimap() end end
 end
 
 -- Display helpers
-local function agoText(age)
+function GF.agoText(age)
   if age<60 then return 'just now' end
   if age<3600 then return math.floor(age/60)..'m ago' end
   if age<86400 then return math.floor(age/3600)..'h ago' end
   return math.floor(age/86400)..'d ago'
 end
-local function updatedLabel(timestamp)
+function GF.updatedLabel(timestamp)
   if not timestamp or timestamp<=0 then return 'unknown' end
-  return agoText(math.max(0,now()-timestamp))
+  return GF.agoText(math.max(0,now()-timestamp))
 end
-local function durationText(seconds)
+function GF.durationText(seconds)
   seconds=math.max(0,math.floor(seconds))
   if seconds>=86400 then return math.floor(seconds/86400)..'d '..math.floor((seconds%86400)/3600)..'h' end
   if seconds>=3600 then return math.floor(seconds/3600)..'h '..math.floor((seconds%3600)/60)..'m' end
   return math.max(1,math.floor(seconds/60))..'m'
 end
-local function availabilityText(c)
+function GF.availabilityText(c)
   if c.online then return '|cff40ff40Online|r' end
   local ago=guildLastSeen[c.id]
-  if ago then return '|cffa0a0a0Seen '..(ago<3600 and 'within 1h' or agoText(ago))..'|r' end
+  if ago then return '|cffa0a0a0Seen '..(ago<3600 and 'within 1h' or GF.agoText(ago))..'|r' end
   return '|cff808080Offline|r'
 end
-local function setDot(texture,online)
+function GF.setDot(texture,online)
   if online then texture:SetVertexColor(.2,1,.2) else texture:SetVertexColor(.4,.4,.4) end
 end
-local function rankColor(rank)
+function GF.rankColor(rank)
   if rank>=300 then return 1,.5,0 end
   if rank>=225 then return .64,.21,.93 end
   if rank>=150 then return 0,.44,.87 end
   if rank>=75 then return .12,1,0 end
   return .62,.62,.62
 end
-local function rankTitle(max)
+function GF.rankTitle(max)
   if max>=300 then return 'Artisan' elseif max>=225 then return 'Expert' elseif max>=150 then return 'Journeyman' end
   return 'Apprentice'
 end
@@ -938,14 +947,14 @@ local function itemIcon(id)
   if GetItemIcon then return GetItemIcon(id) end
   if GetItemInfoInstant then return select(5,GetItemInfoInstant(id)) end
 end
-local function recipeIcon(prof,info)
+function GF.recipeIcon(prof,info)
   if info and info.icon then return info.icon end
   local kind,id=splitLink(info and info.link)
   if kind=='i' then return itemIcon(id) or QUESTION_ICON end
   if kind=='e' and GetSpellTexture then return GetSpellTexture(id) or professionIcons[prof] end
   return professionIcons[prof] or QUESTION_ICON
 end
-local function recipeLabel(name,info)
+function GF.recipeLabel(name,info)
   local kind,id=splitLink(info and info.link)
   if kind=='i' then
     local _,_,quality=GetItemInfo(id)
@@ -979,32 +988,32 @@ local function craftableTimes(info)
   end
   return times
 end
-local function showLinkTooltip(owner,link)
+function GF.showLinkTooltip(owner,link)
   local kind,id=splitLink(link)
   if not kind then return false end
   GameTooltip:SetOwner(owner,'ANCHOR_RIGHT')
   GameTooltip:SetHyperlink((kind=='i' and 'item:' or 'enchant:')..id)
   return true
 end
-local function chatLinkFor(link)
+function GF.chatLinkFor(link)
   local kind,id=splitLink(link)
   if kind=='i' then return (select(2,GetItemInfo(id))) end
   if kind=='e' and GetSpellLink then return GetSpellLink(id) end
 end
 local function insertChatLink(link)
-  local chatLink=chatLinkFor(link)
+  local chatLink=GF.chatLinkFor(link)
   if chatLink and InsertChatLink then InsertChatLink(chatLink) end
 end
 
 -- Craft requests: whisper the best online crafter with the item link and the mats you already have.
-local function craftTarget(r)
+function GF.craftTarget(r)
   for _,c in ipairs(r.crafters) do
     if not c.isMe and c.online then return c end
   end
 end
-local function requestCraft(r,target)
+function GF.requestCraft(r,target)
   if not (target and SendChat) then return end
-  local message='[GuildForge] Hi '..target.character..'! Could you craft '..(chatLinkFor(r.info and r.info.link) or r.name)..' for me?'
+  local message='[GuildForge] Hi '..target.character..'! Could you craft '..(GF.chatLinkFor(r.info and r.info.link) or r.name)..' for me?'
   local have={}
   for _,reagent in ipairs(r.info and r.info.reagents or {}) do
     local bags=bagCount(reagent)
@@ -1018,10 +1027,10 @@ local function requestCraft(r,target)
 end
 
 -- Shopping list: recipes you plan to craft, combined into the mats you still need.
-local function shoppingKey(prof,name) return prof..'|'..name end
+function GF.shoppingKey(prof,name) return prof..'|'..name end
 local function changeShopping(prof,name,delta)
   local list=GuildForgeDB.shopping
-  local k=shoppingKey(prof,name)
+  local k=GF.shoppingKey(prof,name)
   local qty=(list[k] or 0)+delta
   list[k]=qty>0 and qty or nil
   requestUpdate()
@@ -1036,7 +1045,7 @@ local function shoppingEntries()
   return entries
 end
 -- Combined reagent needs keyed by item id (or name when the id is unknown), plus a display order.
-local function shoppingNeeds()
+function GF.shoppingNeeds()
   local needs,order={},{}
   for _,e in ipairs(shoppingEntries()) do
     for _,r in ipairs(e.info and e.info.reagents or {}) do
@@ -1053,7 +1062,7 @@ local function shoppingNeeds()
 end
 
 -- Item tooltips: who in the guild crafts an item, which recipes use it, and shopping-list needs.
-local function buildIndex()
+function GF.buildIndex()
   recipeIndex={craftedBy={},usedIn={}}
   local knownBy={}
   for who,record in pairs(currentMembers()) do
@@ -1088,23 +1097,23 @@ local function buildIndex()
   end
   indexDirty=false
 end
-local function shortList(list,limit)
+function GF.shortList(list,limit)
   local out={}
   for i=1,math.min(limit,#list) do out[i]=list[i] end
   return table.concat(out,', ')..(#list>limit and (' +'..(#list-limit)) or '')
 end
-local function addTooltipLines(tooltip,id)
+function GF.addTooltipLines(tooltip,id)
   if not settings().tooltips or not db or type(id)~='number' or isSecret(id) then return end
-  if indexDirty or not recipeIndex then buildIndex() end
+  if indexDirty or not recipeIndex then GF.buildIndex() end
   local name=GetItemInfo(id)
   local crafters=recipeIndex.craftedBy[id]
   local usedIn=recipeIndex.usedIn[id] or (name and recipeIndex.usedIn[name])
-  local needs=shoppingNeeds()
+  local needs=GF.shoppingNeeds()
   local need=needs[id] or (name and needs[name])
   if not (crafters or usedIn or need) then return end
   tooltip:AddLine(' ')
-  if crafters then tooltip:AddLine('|cffe7c483GuildForge:|r crafted by '..shortList(crafters,4),.85,.85,.85,true) end
-  if usedIn then tooltip:AddLine('|cffe7c483GuildForge:|r used in '..shortList(usedIn,3),.85,.85,.85,true) end
+  if crafters then tooltip:AddLine('|cffe7c483GuildForge:|r crafted by '..GF.shortList(crafters,4),.85,.85,.85,true) end
+  if usedIn then tooltip:AddLine('|cffe7c483GuildForge:|r used in '..GF.shortList(usedIn,3),.85,.85,.85,true) end
   if need then
     local bags=GetItemCount and GetItemCount(id) or 0
     if bags<need.need then
@@ -1114,10 +1123,10 @@ local function addTooltipLines(tooltip,id)
     end
   end
 end
-local function hookTooltips()
+function GF.hookTooltips()
   if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item,function(tooltip,data)
-      if tooltip==GameTooltip or tooltip==ItemRefTooltip then addTooltipLines(tooltip,data and data.id) end
+      if tooltip==GameTooltip or tooltip==ItemRefTooltip then GF.addTooltipLines(tooltip,data and data.id) end
     end)
     return
   end
@@ -1125,14 +1134,14 @@ local function hookTooltips()
     if tooltip and tooltip.HookScript then
       tooltip:HookScript('OnTooltipSetItem',function(self)
         local _,link=self:GetItem()
-        addTooltipLines(self,itemId(link))
+        GF.addTooltipLines(self,itemId(link))
       end)
     end
   end
 end
 
 -- Guild data per profession
-local function gather(prof)
+function GF.gather(prof)
   local crafters,recipes,byName={},{},{}
   local me=key()
   for who,record in pairs(currentMembers()) do
@@ -1171,7 +1180,7 @@ local function gather(prof)
   table.sort(recipes,function(a,b) return a.name<b.name end)
   return crafters,recipes,byName
 end
-local function hasProfession(prof)
+function GF.hasProfession(prof)
   for _,record in pairs(currentMembers()) do
     if type(record)=='table' then
       for _,p in ipairs(record.professions or {}) do if p.name==prof then return true end end
@@ -1180,7 +1189,7 @@ local function hasProfession(prof)
   return false
 end
 local function found(text,term) return text and text:lower():find(term,1,true)~=nil end
-local function recipeMatches(r,prof,term)
+function GF.recipeMatches(r,prof,term)
   if term=='' or found(prof,term) or found(r.name,term) then return true end
   for _,c in ipairs(r.crafters) do if found(c.character,term) then return true end end
   for _,reagent in ipairs(r.info and r.info.reagents or {}) do
@@ -1188,8 +1197,8 @@ local function recipeMatches(r,prof,term)
   end
   return false
 end
-local function professionData(prof,term)
-  local crafters,recipes,byName=gather(prof)
+function GF.professionData(prof,term)
+  local crafters,recipes,byName=GF.gather(prof)
   local filter=selectedCrafter[prof]
   local matsOnly=GuildForgeDB and GuildForgeDB.ui.matsOnly
   local d={crafters=crafters,recipes=recipes,crafterCount=#crafters,recipeCount=#recipes,fc={},fr={},unknown={},unknownTotal=0,ready=0,filter=filter}
@@ -1204,7 +1213,7 @@ local function professionData(prof,term)
     if (r.times or 0)>0 then d.ready=d.ready+1 end
     local byFilter=not filter
     if filter then for _,c in ipairs(r.crafters) do if c.key==filter then byFilter=true; break end end end
-    if byFilter and recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.fr[#d.fr+1]=r end
+    if byFilter and GF.recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.fr[#d.fr+1]=r end
   end
   -- Recipes seen at trainers (or unlearned on Forever) that nobody in the guild has shared.
   for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
@@ -1212,7 +1221,7 @@ local function professionData(prof,term)
       d.unknownTotal=d.unknownTotal+1
       local r={name=name,crafters={},info=info}
       r.times=craftableTimes(info)
-      if not filter and recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.unknown[#d.unknown+1]=r end
+      if not filter and GF.recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.unknown[#d.unknown+1]=r end
     end
   end
   table.sort(d.unknown,function(a,b)
@@ -1224,7 +1233,7 @@ local function professionData(prof,term)
   return d
 end
 -- Counts and top crafter for every profession in one pass, for the All tab when nothing is searched.
-local function professionOverview()
+function GF.professionOverview()
   local out={}
   for _,prof in ipairs(professions) do out[prof]={crafterCount=0,recipeCount=0,seen={}} end
   for who,record in pairs(currentMembers()) do
@@ -1249,7 +1258,7 @@ local function professionOverview()
   end
   return out
 end
-local function gatherCooldowns(prof,term)
+function GF.gatherCooldowns(prof,term)
   local list,ready={},0
   local me=key()
   for who,record in pairs(currentMembers()) do
@@ -1299,7 +1308,7 @@ local function smallButton(parent,label,width)
   b:SetSize(width,20); b:SetText(label)
   return b
 end
-local function iconSlot(b,size)
+function GF.iconSlot(b,size)
   b.iconBorder=b:CreateTexture(nil,'BORDER'); b.iconBorder:SetSize(size+2,size+2); b.iconBorder:SetColorTexture(0,0,0,.8)
   b.icon=b:CreateTexture(nil,'ARTWORK'); b.icon:SetSize(size,size); b.icon:SetPoint('CENTER',b.iconBorder,'CENTER'); b.icon:SetTexCoord(.07,.93,.07,.93)
 end
@@ -1347,7 +1356,7 @@ factories.recipe=function()
   b:SetHeight(26)
   b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
   b.toggle=b:CreateTexture(nil,'ARTWORK'); b.toggle:SetSize(14,14); b.toggle:SetPoint('LEFT',3,0)
-  iconSlot(b,22); b.iconBorder:SetPoint('LEFT',20,0)
+  GF.iconSlot(b,22); b.iconBorder:SetPoint('LEFT',20,0)
   b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.iconBorder,'RIGHT',8,0); b.name:SetWidth(270)
   b.crafters=fontString(b,'GameFontHighlightSmall'); b.crafters:SetPoint('LEFT',330,0); b.crafters:SetWidth(180)
   b.mats=fontString(b,'GameFontHighlightSmall','RIGHT'); b.mats:SetPoint('RIGHT',-8,0); b.mats:SetWidth(120)
@@ -1375,7 +1384,7 @@ factories.shopItem=function()
   local b=CreateFrame('Button',nil,scrollContent)
   b:SetHeight(26)
   b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
-  iconSlot(b,22); b.iconBorder:SetPoint('LEFT',6,0)
+  GF.iconSlot(b,22); b.iconBorder:SetPoint('LEFT',6,0)
   b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.iconBorder,'RIGHT',8,0); b.name:SetWidth(250)
   b.prof=fontString(b,'GameFontDisableSmall'); b.prof:SetPoint('LEFT',300,0); b.prof:SetWidth(110)
   b.status=fontString(b,'GameFontHighlightSmall'); b.status:SetPoint('LEFT',410,0); b.status:SetWidth(90)
@@ -1413,24 +1422,24 @@ local function acquire(kind)
   w:ClearAllPoints(); w:Show()
   return w
 end
-local function releaseAll()
+function GF.releaseAll()
   for _,pool in pairs(pools) do
     for i=1,#pool do pool[i]:Hide() end
     pool.used=0
   end
 end
-local function toggleTexture(open)
+function GF.toggleTexture(open)
   return open and 'Interface\\Buttons\\UI-MinusButton-Up' or 'Interface\\Buttons\\UI-PlusButton-Up'
 end
-local function showCrafterTooltip(owner,prof,c)
+function GF.showCrafterTooltip(owner,prof,c)
   GameTooltip:SetOwner(owner,'ANCHOR_RIGHT')
   GameTooltip:AddLine(c.character..(c.isMe and ' (You)' or ''),1,.82,0)
-  GameTooltip:AddLine(prof..'  '..c.rank..' / '..c.max..'  ('..rankTitle(c.max)..')',1,1,1)
+  GameTooltip:AddLine(prof..'  '..c.rank..' / '..c.max..'  ('..GF.rankTitle(c.max)..')',1,1,1)
   GameTooltip:AddLine(c.recipeCount..' recipes shared',.8,.8,.8)
-  GameTooltip:AddLine(availabilityText(c),1,1,1)
-  GameTooltip:AddLine('Data updated '..updatedLabel(c.updated),.6,.6,.6)
+  GameTooltip:AddLine(GF.availabilityText(c),1,1,1)
+  GameTooltip:AddLine('Data updated '..GF.updatedLabel(c.updated),.6,.6,.6)
   if c.isMe then GameTooltip:AddLine('GuildForge v'..VERSION,.6,.6,.6)
-  elseif activeSeen[c.id] then GameTooltip:AddLine('GuildForge '..versionLabel(c.id),.6,.6,.6) end
+  elseif activeSeen[c.id] then GameTooltip:AddLine('GuildForge '..GF.versionLabel(c.id),.6,.6,.6) end
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('Click to show only their recipes',.4,.8,1)
   GameTooltip:Show()
@@ -1441,7 +1450,7 @@ update=function()
   updatePending=false; sinceUpdate=0
   local term=(searchBox and searchBox:GetText() or ''):lower()
   local searching=term~=''
-  releaseAll()
+  GF.releaseAll()
   local y=0
   local stripe=0
   local function place(w,h,x)
@@ -1465,7 +1474,7 @@ update=function()
     elseif sectionCollapsed[id]==nil then open=not defaultClosed
     else open=not sectionCollapsed[id] end
     local b=acquire('section')
-    b.toggle:SetTexture(toggleTexture(open))
+    b.toggle:SetTexture(GF.toggleTexture(open))
     b.label:SetText(label)
     b.extra:SetText(extra or '')
     b:SetScript('OnClick',function()
@@ -1487,35 +1496,35 @@ update=function()
     nextStripe(b.stripe)
     b.selected:SetShown(selectedCrafter[prof]==c.key)
     b.place:SetText(index..'.')
-    setDot(b.dot,c.online)
+    GF.setDot(b.dot,c.online)
     b.name:SetText(c.character..(c.isMe and ' |cff40ff40(You)|r' or ''))
     b.bar:SetMinMaxValues(0,math.max(1,c.max))
     b.bar:SetValue(c.rank)
-    b.bar:SetStatusBarColor(rankColor(c.rank))
+    b.bar:SetStatusBarColor(GF.rankColor(c.rank))
     b.bar.text:SetText(c.rank..' / '..c.max)
     b.recipes:SetText(c.recipeCount>0 and ('|cffffd100'..c.recipeCount..'|r recipes') or '|cff808080no recipes|r')
-    b.seen:SetText(availabilityText(c))
+    b.seen:SetText(GF.availabilityText(c))
     b:SetScript('OnClick',function()
       releaseSearchFocus()
       selectedCrafter[prof]=(selectedCrafter[prof]~=c.key) and c.key or nil
       if clickTabs then selectTab(prof) else update() end
     end)
-    b:SetScript('OnEnter',function(self) showCrafterTooltip(self,prof,c) end)
+    b:SetScript('OnEnter',function(self) GF.showCrafterTooltip(self,prof,c) end)
     b:SetScript('OnLeave',GameTooltip_Hide)
     place(b,20,8)
   end
   local function addCooldown(cd)
     local b=acquire('cooldown')
     nextStripe(b.stripe)
-    setDot(b.dot,cd.online)
+    GF.setDot(b.dot,cd.online)
     b.icon:SetTexture(professionIcons[cd.prof] or QUESTION_ICON)
     b.text:SetText(cd.character..(cd.isMe and ' |cff40ff40(You)|r' or '')..'  |cffa0a0a0-|r  |cffffd100'..cd.name..'|r')
-    b.status:SetText(cd.ready and '|cff40ff40Ready|r' or ('|cffffb040Ready in '..durationText(cd.readyAt-now())..'|r'))
+    b.status:SetText(cd.ready and '|cff40ff40Ready|r' or ('|cffffb040Ready in '..GF.durationText(cd.readyAt-now())..'|r'))
     b:SetScript('OnEnter',function(self)
       GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
       GameTooltip:AddLine(cd.name,1,.82,0)
       GameTooltip:AddLine(cd.character..'  ('..cd.prof..')',1,1,1)
-      GameTooltip:AddLine('Reported '..updatedLabel(cd.updated),.6,.6,.6)
+      GameTooltip:AddLine('Reported '..GF.updatedLabel(cd.updated),.6,.6,.6)
       GameTooltip:Show()
     end)
     b:SetScript('OnLeave',GameTooltip_Hide)
@@ -1523,7 +1532,7 @@ update=function()
     place(b,20,8)
   end
   local function addCooldownSection(id,prof)
-    local list,ready=gatherCooldowns(prof,term)
+    local list,ready=GF.gatherCooldowns(prof,term)
     if #list==0 then return end
     if addSection(id,'Cooldowns',ready..' of '..#list..' ready') then
       for _,cd in ipairs(list) do addCooldown(cd) end
@@ -1534,9 +1543,9 @@ update=function()
     local open=recipeOpen[id]==true
     local b=acquire('recipe')
     nextStripe(b.stripe,.045)
-    b.toggle:SetTexture(toggleTexture(open))
-    b.icon:SetTexture(recipeIcon(prof,r.info))
-    b.name:SetText(recipeLabel(r.name,r.info))
+    b.toggle:SetTexture(GF.toggleTexture(open))
+    b.icon:SetTexture(GF.recipeIcon(prof,r.info))
+    b.name:SetText(GF.recipeLabel(r.name,r.info))
     if #r.crafters>0 then
       local names={}
       for i=1,math.min(2,#r.crafters) do
@@ -1563,7 +1572,7 @@ update=function()
       update()
     end)
     b:SetScript('OnEnter',function(self)
-      if not showLinkTooltip(self,r.info and r.info.link) then
+      if not GF.showLinkTooltip(self,r.info and r.info.link) then
         GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
         GameTooltip:AddLine(r.name,1,.82,0)
       end
@@ -1611,16 +1620,16 @@ update=function()
       addNote('|cffffd100Crafted by:|r '..table.concat(list,', '),56)
     end
     local a=acquire('actions')
-    local target=craftTarget(r)
+    local target=GF.craftTarget(r)
     if target then
       a.b1:SetText('Ask '..target.character); a.b1:Enable()
     else
       a.b1:SetText(r.mine and 'You know this' or (#r.crafters>0 and 'No crafter online' or 'No crafter yet')); a.b1:Disable()
     end
-    a.b1:SetScript('OnClick',function() releaseSearchFocus(); requestCraft(r,target) end)
+    a.b1:SetScript('OnClick',function() releaseSearchFocus(); GF.requestCraft(r,target) end)
     a.b2:SetText('Add to list'); a.b2:Enable(); a.b2:Show()
     a.b2:SetScript('OnClick',function() releaseSearchFocus(); changeShopping(prof,r.name,1); update() end)
-    local onList=GuildForgeDB.shopping[shoppingKey(prof,r.name)]
+    local onList=GuildForgeDB.shopping[GF.shoppingKey(prof,r.name)]
     a.text:SetText(onList and ('On your shopping list: '..onList) or '')
     place(a,28,56)
     y=y+4
@@ -1631,9 +1640,9 @@ update=function()
     local totalCrafters,totalRecipes=0,0
     addCooldownSection('all|cooldowns',nil)
     local any=false
-    local overview=not searching and professionOverview()
+    local overview=not searching and GF.professionOverview()
     for _,prof in ipairs(professions) do
-      local d=overview and overview[prof] or professionData(prof,term)
+      local d=overview and overview[prof] or GF.professionData(prof,term)
       totalCrafters=totalCrafters+d.crafterCount; totalRecipes=totalRecipes+d.recipeCount
       local profMatch=searching and found(prof,term)
       if not searching or profMatch or #d.fc>0 or #d.fr>0 then
@@ -1672,8 +1681,8 @@ update=function()
       for _,e in ipairs(entries) do
         local b=acquire('shopItem')
         nextStripe(b.stripe,.045)
-        b.icon:SetTexture(recipeIcon(e.prof,e.info))
-        b.name:SetText(recipeLabel(e.name,e.info))
+        b.icon:SetTexture(GF.recipeIcon(e.prof,e.info))
+        b.name:SetText(GF.recipeLabel(e.name,e.info))
         b.prof:SetText(e.prof)
         local times=craftableTimes(e.info)
         b.status:SetText(times==nil and '|cff808080Reagents unknown|r' or (times>=e.qty and '|cff40ff40Mats ready|r' or '|cffff5a5aMissing mats|r'))
@@ -1681,7 +1690,7 @@ update=function()
         b.minus:SetScript('OnClick',function() changeShopping(e.prof,e.name,-1); update() end)
         b.plus:SetScript('OnClick',function() changeShopping(e.prof,e.name,1); update() end)
         b.remove:SetScript('OnClick',function() changeShopping(e.prof,e.name,-e.qty); update() end)
-        b:SetScript('OnEnter',function(self) if showLinkTooltip(self,e.info and e.info.link) then GameTooltip:Show() end end)
+        b:SetScript('OnEnter',function(self) if GF.showLinkTooltip(self,e.info and e.info.link) then GameTooltip:Show() end end)
         b:SetScript('OnLeave',GameTooltip_Hide)
         b:SetScript('OnClick',function()
           if IsModifiedClick and IsModifiedClick('CHATLINK') then insertChatLink(e.info and e.info.link) end
@@ -1689,7 +1698,7 @@ update=function()
         place(b,26,8)
       end
     end
-    local _,order=shoppingNeeds()
+    local _,order=GF.shoppingNeeds()
     local missing=0
     for _,n in ipairs(order) do if bagCount(n.reagent)<n.need then missing=missing+1 end end
     if addSection('shop|mats','Materials',missing==0 and (#order>0 and '|cff40ff40All gathered|r' or '') or ('|cffff5a5a'..missing..' still needed|r')) then
@@ -1729,7 +1738,7 @@ update=function()
     headerSub:SetText(#shoppingEntries()..' recipes  ·  '..#order..' materials  ·  '..(missing>0 and ('|cffff5a5a'..missing..' still needed|r') or '|cff40ff40nothing missing|r'))
   else
     local prof=selected
-    local d=professionData(prof,term)
+    local d=GF.professionData(prof,term)
     if addSection(prof..'|crafters','Crafters',#d.fc..' of '..#d.crafters) then
       if #d.fc==0 then addNote('No guildmates have shared '..prof..' yet.',16) end
       for i,c in ipairs(d.fc) do addCrafter(prof,c,i,false) end
@@ -1763,7 +1772,7 @@ update=function()
   scrollContent:SetHeight(math.max(100,y+10))
   for _,t in ipairs(tabs) do
     t:SetChecked(t.name==selectedTab)
-    if not specialTabs[t.name] then t:GetNormalTexture():SetDesaturated(not hasProfession(t.name)) end
+    if not specialTabs[t.name] then t:GetNormalTexture():SetDesaturated(not GF.hasProfession(t.name)) end
   end
   local guild=(IsInGuild and IsInGuild()) and (GetGuildInfo and GetGuildInfo('player') or 'In guild') or 'Not in guild'
   local queued=#recipeQueue>0 and ('  |  sharing '..#recipeQueue..' queued') or ''
@@ -1792,7 +1801,7 @@ local function makeTab(index,name)
   t:SetScript('OnEnter',function(self)
     GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
     GameTooltip:AddLine(specialTabs[name] or name,1,.82,0)
-    if not specialTabs[name] and not hasProfession(name) then GameTooltip:AddLine('No guildmates recorded yet',.6,.6,.6) end
+    if not specialTabs[name] and not GF.hasProfession(name) then GameTooltip:AddLine('No guildmates recorded yet',.6,.6,.6) end
     GameTooltip:Show()
   end)
   t:SetScript('OnLeave',GameTooltip_Hide)
@@ -1805,7 +1814,7 @@ local function setScale(value)
   if window then window:SetScale(value) end
   return value
 end
-local function makeSettingsPanel(f,inset)
+function GF.makeSettingsPanel(f,inset)
   local panel=CreateFrame('Frame',nil,f,BACKDROP_TEMPLATE)
   panel:SetPoint('TOPLEFT',inset,'TOPLEFT'); panel:SetPoint('BOTTOMRIGHT',inset,'BOTTOMRIGHT')
   -- A higher strata keeps list rows from drawing through the panel when the window is raised or rows are rebuilt.
@@ -1851,7 +1860,7 @@ local function makeSettingsPanel(f,inset)
   y=y-48
 
   local push=smallButton(panel,'Re-share all my recipes',180); push:SetPoint('TOPLEFT',22,y)
-  push:SetScript('OnClick',doPush)
+  push:SetScript('OnClick',GF.doPush)
   local pushHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); pushHint:SetPoint('LEFT',push,'RIGHT',10,0)
   pushHint:SetText('Normal syncs only send lists that changed; use this if someone is missing yours.')
   y=y-36
@@ -1895,7 +1904,7 @@ local function makeWindow()
     b:SetScript('OnClick',function(...) releaseSearchFocus(); fn(...) end)
     return b
   end
-  local refresh=button('Refresh',80,{'TOPLEFT',22,-36},doRefresh)
+  local refresh=button('Refresh',80,{'TOPLEFT',22,-36},GF.doRefresh)
   local sync=button('Sync Guild',90,{'LEFT',refresh,'RIGHT',6,0},doSync)
   local gear=CreateFrame('Button',nil,f)
   gear:SetSize(22,22); gear:SetPoint('LEFT',sync,'RIGHT',8,0)
@@ -1943,7 +1952,7 @@ local function makeWindow()
   scrollContent:EnableMouse(true); scrollContent:SetScript('OnMouseDown',releaseSearchFocus)
   scrollFrame:SetScrollChild(scrollContent)
 
-  f.settingsPanel=makeSettingsPanel(f,inset)
+  f.settingsPanel=GF.makeSettingsPanel(f,inset)
   gear:SetScript('OnClick',function() releaseSearchFocus(); f.settingsPanel:SetShown(not f.settingsPanel:IsShown()) end)
 
   status=f:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); status:SetPoint('BOTTOMLEFT',22,17)
@@ -1971,7 +1980,7 @@ local function openSettings()
   window.settingsPanel:Show()
 end
 -- Esc > Options > AddOns entry on clients with the modern Settings panel (WoW: Forever).
-local function registerOptions()
+function GF.registerOptions()
   if not (Settings and Settings.RegisterCanvasLayoutCategory and Settings.RegisterAddOnCategory) then return end
   local panel=CreateFrame('Frame')
   local title=panel:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',16,-16); title:SetText('GuildForge')
@@ -2000,7 +2009,7 @@ local function showMinimapTooltip(self)
   GameTooltip:AddLine(#users..' online with GuildForge',1,1,1)
   for i=1,math.min(#users,15) do GameTooltip:AddLine('   '..users[i],.55,.9,.55) end
   if #users>15 then GameTooltip:AddLine('   and '..(#users-15)..' more',.6,.6,.6) end
-  local _,ready=gatherCooldowns(nil,'')
+  local _,ready=GF.gatherCooldowns(nil,'')
   if ready>0 then GameTooltip:AddLine(ready..' profession cooldown'..(ready==1 and '' or 's')..' ready',.4,1,.4) end
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('|cffffd100Left-click|r  open GuildForge',.85,.85,.85)
@@ -2013,7 +2022,7 @@ refreshMinimap=function()
   minimapButton.count:SetText(#activeUsers())
   if GameTooltip:IsOwned(minimapButton) then showMinimapTooltip(minimapButton) end
 end
-local function makeMinimapButton()
+function GF.makeMinimapButton()
   local b=CreateFrame('Button','GuildForgeMinimapButton',Minimap)
   minimapButton=b
   b:SetSize(31,31); b:SetFrameStrata('MEDIUM'); b:SetFrameLevel(8)
@@ -2056,7 +2065,7 @@ function GuildForge_OnAddonCompartmentClick(_,mouse)
   if mouse=='RightButton' then doSync() else toggle() end
 end
 -- /guildcraft stays as an alias for people used to the old name.
-SLASH_GUILDFORGE1='/guildforge'; SLASH_GUILDFORGE2='/gforge'; SLASH_GUILDFORGE3='/guildprof'; SLASH_GUILDFORGE4='/guildcraft'
+SLASH_GUILDFORGE1='/guildforge'; SLASH_GUILDFORGE2='/gforge'; SLASH_GUILDFORGE3='/guildprof'; SLASH_GUILDFORGE4='/guildcraft'; SLASH_GUILDFORGE5='/gf'
 SlashCmdList['GUILDFORGE']=function(message)
   message=(message or ''):lower():match('^%s*(.-)%s*$')
   if message=='status' then
@@ -2069,8 +2078,8 @@ SlashCmdList['GUILDFORGE']=function(message)
     log(#users..' online with GuildForge:',true)
     for _,line in ipairs(users) do log('   '..line,true) end
   elseif message=='sync' then doSync()
-  elseif message=='push' then doPush()
-  elseif message=='refresh' then doRefresh()
+  elseif message=='push' then GF.doPush()
+  elseif message=='refresh' then GF.doRefresh()
   elseif message=='config' or message=='settings' or message=='options' then openSettings()
   elseif message=='minimap' then
     GuildForgeDB.minimap.hide=not GuildForgeDB.minimap.hide
@@ -2120,12 +2129,12 @@ StaticPopupDialogs['GUILDFORGE_CLEAR']={
 }
 frame:SetScript('OnEvent',function(_,event,...)
   if event=='PLAYER_LOGIN' then
-    initDB(); selectGuild(); save(); migrateLegacy()
+    GF.initDB(); selectGuild(); save(); GF.migrateLegacy()
     local register=(C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
     if register then register(PREFIX); register(RECIPE_PREFIX) end
-    makeMinimapButton()
-    registerOptions()
-    hookTooltips()
+    GF.makeMinimapButton()
+    GF.registerOptions()
+    GF.hookTooltips()
     requestRoster()
     log('v'..VERSION..' loaded. Click the GF minimap button or type /guildforge to open.')
     -- Probe first so our name matches what guildmates see before the real sync goes out.
@@ -2138,7 +2147,7 @@ frame:SetScript('OnEvent',function(_,event,...)
   elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
     if not scanScheduled then scanScheduled=true; later(0.3,scanRecipes) end
   elseif event=='TRAINER_SHOW' or event=='TRAINER_UPDATE' then
-    later(0.3,scanTrainer)
+    later(0.3,GF.scanTrainer)
   elseif event=='UNIT_SPELLCAST_SUCCEEDED' then
     local unit,_,spellID=...
     if unit=='player' and not isSecret(spellID) and COOLDOWN_SPELLS[spellID] then
@@ -2151,16 +2160,16 @@ frame:SetScript('OnEvent',function(_,event,...)
     if selectGuild() then save(); if syncReady then rollCall(true) end end
     requestRoster(); requestUpdate()
   elseif event=='GUILD_ROSTER_UPDATE' then
-    refreshRoster()
+    GF.refreshRoster()
     if selectGuild() then save() end
-    migrateLegacy(); pruneFormerMembers(); refreshMinimap(); requestUpdate()
+    GF.migrateLegacy(); GF.pruneFormerMembers(); refreshMinimap(); requestUpdate()
   elseif event=='BAG_UPDATE' or event=='GET_ITEM_INFO_RECEIVED' or event=='ITEM_DATA_LOAD_RESULT' then
     requestRedraw()
   elseif event=='CHAT_MSG_ADDON' then
     local prefix,msg,channel,sender=...
     if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg:sub(1,2)=='V|' then
       local who,version,flag=msg:match('^V|([^|]+)|?([^|]*)|?(.*)$')
-      if who==key() and not isSecret(sender) then learnOwnName(sender); requestUpdate(); return end
+      if who==key() and not isSecret(sender) then GF.learnOwnName(sender); requestUpdate(); return end
       if who and senderMatches(sender,who) then
         addonVersions[nameId(who)]=version
         -- Reply to a roll call after a random delay so a big guild's answers trickle in.
@@ -2173,16 +2182,16 @@ frame:SetScript('OnEvent',function(_,event,...)
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender
-      if senderMatches(sender,who) and nameId(who)~=nameId(key()) then markSeen(who) end
+      if senderMatches(sender,who) and nameId(who)~=nameId(key()) then GF.markSeen(who) end
     end
     if channel=='GUILD' then
-      if prefix==PREFIX then parseMessage(msg,sender); requestUpdate() end
-      if prefix==RECIPE_PREFIX then receiveRecipe(msg,sender) end
+      if prefix==PREFIX then GF.parseMessage(msg,sender); requestUpdate() end
+      if prefix==RECIPE_PREFIX then GF.receiveRecipe(msg,sender) end
     end
   end
 end)
 frame:SetScript('OnUpdate',function(_,elapsed)
-  local blocked=(#recipeQueue>0 or #heldMessages>0) and messagingBlocked()
+  local blocked=(#recipeQueue>0 or #heldMessages>0) and GF.messagingBlocked()
   if #heldMessages>0 and not blocked then
     local held=heldMessages; heldMessages={}
     for _,payload in ipairs(held) do addonSend(payload) end
@@ -2192,7 +2201,7 @@ frame:SetScript('OnUpdate',function(_,elapsed)
     if lastRecipeSend>=0.25 then
       lastRecipeSend=0
       if IsInGuild and IsInGuild() then
-        if recipeSend(recipeQueue[1]) then
+        if GF.recipeSend(recipeQueue[1]) then
           table.remove(recipeQueue,1); sendFailures=0
         else
           -- Throttled messages go through on a later try; one that keeps failing is dropped so it can't stall the queue.

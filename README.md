@@ -63,7 +63,7 @@ Your guildmates need GuildForge too — the more people running it, the more com
 
 | Command | What it does |
 | --- | --- |
-| `/guildforge` | Open or close the window (also `/gforge`, `/guildprof`, and the old `/guildcraft`) |
+| `/guildforge` | Open or close the window (also `/gf`, `/gforge`, `/guildprof`, and the old `/guildcraft`) |
 | `/guildforge sync` | Ask the guild for any changed professions and recipes |
 | `/guildforge push` | Re-share all of your recipes in full |
 | `/guildforge refresh` | Rescan your own professions |
