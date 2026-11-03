@@ -8,7 +8,7 @@ GuildForge shares every member's profession skills and known recipes over hidden
 
 Built for **WoW Forever**, and also works on **Classic Era**.
 
-![Guild Professions overview](https://raw.githubusercontent.com/TheFrosty02/GuildCraft/main/docs/screenshots/overview.webp)
+![Guild Professions overview](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.webp)
 
 ## Features
 
@@ -23,9 +23,9 @@ Built for **WoW Forever**, and also works on **Classic Era**.
 - **Search everything:** recipes, crafters, professions and reagents, plus a **Have mats** filter.
 - **Light on guild chat.** Syncing sends one short summary per player, and only the data that changed is downloaded.
 
-![Profession tab](https://raw.githubusercontent.com/TheFrosty02/GuildCraft/main/docs/screenshots/profession.webp)
-![Recipe with reagents](https://raw.githubusercontent.com/TheFrosty02/GuildCraft/main/docs/screenshots/recipe.png)
-![Shopping list](https://raw.githubusercontent.com/TheFrosty02/GuildCraft/main/docs/screenshots/shopping-list.png)
+![Profession tab](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.webp)
+![Recipe with reagents](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/recipe.png)
+![Shopping list](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.png)
 
 ## Usage
 
@@ -45,4 +45,4 @@ Your guildmates need GuildForge too: the more people running it, the more comple
 
 ## Feedback
 
-Found a bug or have an idea? Open an issue on [GitHub](https://github.com/TheFrosty02/GuildCraft/issues).
+Found a bug or have an idea? Open an issue on [GitHub](https://github.com/TheFrosty02/GuildForge/issues).
