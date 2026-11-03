@@ -2,6 +2,12 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.3] - 2026-11-02
+
+### Fixed
+- **Nothing was being shared on Classic Era.** A check meant to pause messages while WoW Forever blocks addon chat misread Classic's answer, so every message waited forever. Messages now only wait in instances or combat, when the game really says chat is blocked. `/gf status` shows whether sending is being held.
+- Guildmates' data never arrived on realms whose names contain an apostrophe or other punctuation (like Nek'Rosh): every guild message was rejected as coming from the wrong sender.
+
 ## [1.0.2] - 2026-11-02
 
 ### Changed

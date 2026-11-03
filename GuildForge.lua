@@ -127,7 +127,8 @@ local function key() return (playerName() or 'Unknown')..'-'..realm() end
 local function now() return (time and time()) or 0 end
 -- APIs format realms differently ("Living Flame" vs "LivingFlame", or none for your own realm),
 -- so compare characters by a normalized name-realm id instead of the bare name.
-local function normalizeRealm(server) return (server or ''):gsub('[%s%-]',''):lower() end
+-- Message headers drop spaces and punctuation from realm names ("Nek'Rosh" -> "NekRosh"), so compare letters and digits only.
+local function normalizeRealm(server) return (server or ''):gsub('[^%w]',''):lower() end
 local function splitName(name)
   if type(name)~='string' or isSecret(name) then return nil end
   -- Strip a suffix naming our own realm first, so hyphens in surnames or realm names don't split wrongly.
@@ -233,9 +234,17 @@ end
 function GF.messagingBlocked()
   local C=C_ChatInfo
   if not C then return false end
-  for _,check in ipairs({C.AreOutgoingAddonChatMessagesRestricted,C.InChatMessagingLockdown}) do
-    local blocked=check and check()
-    if blocked and not isSecret(blocked) then return true end
+  -- Blizzard only restricts addon chat in instances and combat. Outside those, send anyway, so a
+  -- check that misreports (Classic Era returned a non-boolean here) can never freeze sharing.
+  local inInstance=IsInInstance and IsInInstance()
+  local inCombat=InCombatLockdown and InCombatLockdown()
+  if not inInstance and not inCombat then return false end
+  for _,name in ipairs({'AreOutgoingAddonChatMessagesRestricted','InChatMessagingLockdown'}) do
+    local check=C[name]
+    if check then
+      local blocked=check()
+      if blocked==true then return true end
+    end
   end
   return false
 end
@@ -2073,7 +2082,7 @@ SlashCmdList['GUILDFORGE']=function(message)
   if message=='status' then
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
-    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d',recipeReceived,recipeSent,#recipeQueue,droppedMessages),true)
+    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,#recipeQueue,droppedMessages,tostring(GF.messagingBlocked())),true)
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)
