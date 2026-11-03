@@ -2,46 +2,82 @@
 
 # GuildForge
 
-**Your guild's professions, all in one place.**
+**Stop asking "can anyone make this?" in guild chat.**
 
-GuildForge shares every member's profession skills and known recipes over hidden guild addon messages, so you can see who can craft what, what it takes to make it, and whether you already have the mats, without spamming guild chat.
+GuildForge turns your whole guild into one shared profession book. Every member's skills and known recipes sync quietly in the background, so you can see who can craft what, what it takes, and whether you already have the mats, in one click.
 
-Built for **WoW Forever**, and also works on **Classic Era**.
+Built for **WoW Forever**. Also works on **Classic Era**.
 
-![Guild Professions overview](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.webp)
+![GuildForge: every profession in your guild at a glance](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.webp)
 
-## Features
+## Find a crafter in seconds
 
-- **Every profession at a glance.** Spellbook-style tabs for each profession, with crafter counts, recipe counts and the top crafter.
-- **Crafters, ranked and live.** Skill bars by rank, a green dot for who's online, and when offline crafters were last seen.
-- **Recipes with reagents.** Icons, item quality, who can craft it, and whether *you* have the mats in your bags (plus what's in your bank).
-- **Ask a crafter.** One click whispers the best online crafter with the item link and the mats you already have.
-- **Shopping list.** Queue recipes and get one combined list of materials, with "need 4 more" on item tooltips everywhere, including the auction house.
-- **Item tooltips.** See which guildmates craft an item and which recipes use it.
-- **Cooldowns.** Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild knows who's ready.
-- **Not known in guild.** Recipes seen at trainers that nobody in the guild has learned yet, with the skill they need.
-- **Search everything:** recipes, crafters, professions and reagents, plus a **Have mats** filter.
-- **Light on guild chat.** Syncing sends one short summary per player, and only the data that changed is downloaded.
+Pick a profession from the tabs down the side and see everyone in the guild who has it, ranked by skill. A green dot means they're online right now; offline crafters show when they were last seen. Click a crafter to see just their recipes.
 
-![Profession tab](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.webp)
-![Recipe with reagents](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/recipe.png)
-![Shopping list](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.webp)
+![Tailoring: crafters ranked by skill, with their recipes](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.webp)
 
-## Usage
+## Know exactly what it takes
 
-Click the **GF** button on your minimap or type `/guildforge`. Open each of your professions once so GuildForge can share your recipes, and visit trainers to fill in **Not known in guild**.
+Every recipe shows its icon, quality, who can make it, and whether **you** have the mats: `Mats ready x2` or `Missing mats`. Expand a recipe to see each reagent with your bag count (and what's sitting in your bank).
+
+- **Ask a crafter:** one click whispers the best online crafter with the item link and the mats you already have.
+- **Add to list:** queue it on your shopping list.
+- **Shift-click** any recipe or reagent to link it in chat.
+
+![A recipe with its reagents, your mat counts and the Ask / Add to list buttons](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/recipe.png)
+
+## Shop smarter
+
+Add the things you want to make and GuildForge totals up every material you need, how much you've gathered, and what's still missing. The same "need 4 more" note shows on item tooltips everywhere: your bags, vendors and the auction house.
+
+![Shopping list with combined materials](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.webp)
+
+## Also in the box
+
+- **Item tooltips:** hover any item to see which guildmates craft it and which recipes use it.
+- **Cooldowns:** Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild knows who's ready.
+- **Not known in guild:** recipes seen at trainers that nobody has learned yet, with the skill they need. Everyone's trainer visits fill it in.
+- **Search everything:** recipes, crafters, professions and reagents ("linen" finds everything that uses Linen Cloth), plus a **Have mats** filter.
+- **Minimap button** with a badge showing how many guildmates are online with GuildForge.
+- **WoW Forever ready:** works with first and last names, and holds its messages while the game blocks addon chat (like combat in instances).
+
+![Settings](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/settings.png)
+
+## Getting started
+
+1. Install GuildForge and log in.
+2. Click the **GF** minimap button or type `/gf`.
+3. Open each of your professions once, so GuildForge can share your recipes.
+4. Visit your trainers to fill in **Not known in guild**.
+
+Get your guildmates to install it too: the more people running GuildForge, the more complete your guild's book gets.
 
 | Command | What it does |
 | --- | --- |
-| `/guildforge` | Open or close the window |
-| `/guildforge sync` | Ask the guild for anything that changed |
-| `/guildforge settings` | Open the settings |
-| `/guildforge clear` | Forget received data and download it fresh |
-| `/guildforge who` | List guildmates online with GuildForge and their versions |
+| `/gf` | Open or close GuildForge |
+| `/gf sync` | Ask the guild for anything that changed |
+| `/gf settings` | Open the settings |
+| `/gf who` | List guildmates online with GuildForge and their versions |
+| `/gf clear` | Forget received data and download it fresh |
 
-## Good to know
+`/guildforge` and `/gforge` work too.
 
-Your guildmates need GuildForge too: the more people running it, the more complete the guild's list gets. Data is stored per account and kept separately for each guild.
+## FAQ
+
+**Will it spam guild chat?**
+No. GuildForge uses hidden addon messages that never show up in chat. When you log in, each guildmate answers with one short summary, and only the data that actually changed gets sent. It's built to stay light even in large guilds.
+
+**Does everyone in the guild need it?**
+Only people who want to appear in the list or see it. Anyone without GuildForge simply isn't listed.
+
+**What gets shared?**
+Your profession skill levels, the recipes you know, your profession cooldowns and trainer recipes you've seen, with your own guild only. Nothing leaves the game.
+
+**Does it work across my alts?**
+Yes. Data is kept separately for each guild, so alts in different guilds never mix.
+
+**Something looks wrong.**
+Open Settings and click **Clear my data**. GuildForge forgets what it received and downloads everything fresh, keeping your own professions.
 
 ## Feedback
 
