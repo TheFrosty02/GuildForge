@@ -14,7 +14,7 @@ The **All** tab lists each profession with how many guildmates have it, how many
 ### Crafters, ranked and live
 Open a profession to see every guildmate who has it, ranked by skill with a color-coded bar (Apprentice, Journeyman, Expert, Artisan). A green dot means they're online right now; offline crafters show when they were last seen. Click a crafter to show only their recipes.
 
-![First Aid tab with crafters and recipes](docs/screenshots/profession.webp)
+![Tailoring tab with crafters and recipes](docs/screenshots/profession.webp)
 
 ### Recipes with reagents and your mat counts
 Every known recipe shows its icon, item-quality color, who can craft it, and whether **you** have the mats in your bags (`Mats ready x17`, `Missing mats`). Expand a recipe to see each reagent with what you have against what's needed, plus anything sitting in your bank.
@@ -28,7 +28,7 @@ Every known recipe shows its icon, item-quality color, who can craft it, and whe
 ### Shopping list
 Collect the recipes you plan to make and GuildForge combines them into one list of materials, showing what you've gathered and how many more you need. The same "need 4 more" note appears on item tooltips everywhere — bags, vendors and the auction house.
 
-![Shopping list](docs/screenshots/shopping-list.png)
+![Shopping list](docs/screenshots/shopping-list.webp)
 
 ### And more
 - **Search** recipes, crafters, professions and reagents (try "linen") across the whole guild, plus a **Have mats** filter for things you can craft right now.

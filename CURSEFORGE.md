@@ -25,7 +25,7 @@ Built for **WoW Forever**, and also works on **Classic Era**.
 
 ![Profession tab](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.webp)
 ![Recipe with reagents](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/recipe.png)
-![Shopping list](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.png)
+![Shopping list](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.webp)
 
 ## Usage
 
