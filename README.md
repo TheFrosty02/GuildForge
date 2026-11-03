@@ -84,8 +84,8 @@ Your guildmates need GuildForge too — the more people running it, the more com
 Pushing a version tag builds `GuildForge.zip` with the [BigWigs packager](https://github.com/BigWigsMods/packager) and publishes it (see `.github/workflows/release.yml`):
 
 ```
-git tag v0.14.0
-git push origin v0.14.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The tag becomes the addon's version, and the matching `CHANGELOG.md` section becomes the release notes. The ZIP is always attached to a GitHub release; it's also uploaded to CurseForge once the repository has a `CF_API_KEY` secret and the TOC files have `## X-Curse-Project-ID`. `CURSEFORGE.md` holds the project page description.
