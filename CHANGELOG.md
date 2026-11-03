@@ -2,6 +2,11 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.1] - 2026-11-02
+
+### Changed
+- The window title now just says **GuildForge**; the version number moved to the bottom of the Settings panel.
+
 ## [1.0.0] - 2026-11-02
 
 First release. **Your guild's professions, all in one place.** GuildForge shares every member's professions and known recipes over hidden guild addon messages, so you can see who can craft what, what it takes, and whether you already have the mats, without spamming guild chat.
