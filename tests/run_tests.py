@@ -1,0 +1,182 @@
+"""Smoke tests for GuildForge in a stand-in WoW environment (tests/mockwow.lua).
+
+Runs the addon with WoW's Lua version (5.1, through lupa) to catch what a syntax check can't:
+the 200-local limit, errors at load or login, and sync between two players over a simulated
+guild channel. Not part of the addon download (.pkgmeta ignores tests/).
+
+    python3 -m venv .venv && .venv/bin/pip install lupa
+    .venv/bin/python tests/run_tests.py            # or pass another GuildForge.lua to test it
+"""
+import os
+import sys
+
+import lupa.lua51 as lua51
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ADDON_PATH = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'GuildForge.lua')
+ADDON = open(ADDON_PATH, encoding='utf-8').read()
+MOCK = open(os.path.join(HERE, 'mockwow.lua'), encoding='utf-8').read()
+failures = []
+
+
+def check(name, ok, detail=''):
+    print(('PASS ' if ok else 'FAIL ') + name + ('' if ok else '  ' + detail))
+    if not ok:
+        failures.append(name)
+
+
+class Player:
+    """One WoW client running GuildForge."""
+
+    def __init__(self, name, skill, recipes, realm='Living Flame', restricted=None, folder='GuildForge', setup=''):
+        self.name, self.realm = name, realm
+        self.lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        g = self.lua.globals()
+        g.PLAYER, g.REALM, g.ADDON_FOLDER = name, realm, folder
+        g.SKILL = self.lua.table(*skill)
+        g.TS_RECIPES = self.lua.table(*recipes)
+        if restricted is not None:
+            g.CHAT_RESTRICTED = restricted
+        self.lua.execute(MOCK)
+        if setup:
+            self.lua.execute(setup)
+        loader = self.lua.eval('function(src,folder) local c,e=loadstring(src,"@GuildForge.lua"); if not c then error(e,0) end; c(folder,{}) end')
+        loader(ADDON, folder)
+
+    def fire(self, *args):
+        self.lua.globals().GF_TEST_fire(*args)
+
+    def step(self, dt=0.3):
+        g = self.lua.globals()
+        g.GF_TEST_timers()
+        g.GF_TEST_tick(dt)
+
+    def members(self):
+        table = self.lua.globals().GF_TEST_members()
+        return {k: (v.profs, v.recipes) for k, v in table.items()}
+
+
+def deliver(players):
+    """Guild channel: every message reaches every player, sender included, with a packed realm."""
+    moved = 0
+    for sender in players:
+        outbox = sender.lua.globals().GF_TEST_outbox()
+        for i in range(1, len(outbox) + 1):
+            prefix, msg = outbox[i][1], outbox[i][2]
+            header = sender.name + '-' + ''.join(ch for ch in sender.realm if ch.isalnum())
+            for player in players:
+                player.fire('CHAT_MSG_ADDON', prefix, msg, 'GUILD', header)
+            moved += 1
+    return moved
+
+
+def run(players, steps=400):
+    sent = 0
+    for _ in range(steps):
+        for p in players:
+            p.step()
+        sent += deliver(players)
+    return sent
+
+
+def test_load(folder):
+    try:
+        p = Player('Arcbinky', ['First Aid', 9, 75], ['Linen Bandage'], folder=folder)
+        p.fire('PLAYER_LOGIN')
+        run([p], steps=20)
+        p.fire('GUILD_ROSTER_UPDATE')
+        g = p.lua.globals()
+        g.SlashCmdList.GUILDFORGE('')
+        g.SlashCmdList.GUILDFORGE('settings')
+        run([p], steps=5)
+        check('loads, logs in and opens (folder %s)' % folder, g.GuildForgeWindow is not None and g.GuildForgeMinimapButton is not None)
+    except Exception as e:  # noqa: BLE001 - report any Lua error as a failure
+        check('loads, logs in and opens (folder %s)' % folder, False, str(e).splitlines()[0])
+
+
+def two_players(realm='Living Flame', restricted=None, late=False):
+    a = Player('Arcbinky', ['First Aid', 9, 75], ['Linen Bandage'], realm, restricted)
+    a.fire('PLAYER_LOGIN')
+    a.fire('TRADE_SKILL_SHOW')
+    if late:
+        run([a], steps=200)
+    b = Player('Fortbek', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], realm, restricted)
+    b.fire('PLAYER_LOGIN')
+    if not late:
+        b.fire('TRADE_SKILL_SHOW')
+    sent = run([a, b])
+    return a.members(), b.members(), sent
+
+
+def test_sync(label, **kw):
+    seen_by_a, seen_by_b, sent = two_players(**kw)
+    b_recipes = 0 if kw.get('late') else 2
+    ok = seen_by_b.get('Arcbinky') == (1, 1) and seen_by_a.get('Fortbek') == (1, b_recipes)
+    check('sync: ' + label, ok, 'A sees %s, B sees %s, %d messages' % (seen_by_a, seen_by_b, sent))
+
+
+TRAINER_SETUP = r'''
+  GuildForgeDB={recipeInfo={Cooking={['Expert Cook']={reagents={},remote=true,source='Trainer',req=125}}}}
+  SERVICES={
+    {'Apprentice Cook','','available',0}, {'Journeyman Cook','','unavailable',50},
+    {'Cooking','Expert','unavailable',125}, {'Spider Sausage','','unavailable',200},
+    {'Herb Baked Egg','','used',1},
+  }
+  function GetNumTrainerServices() return #SERVICES end
+  function GetTrainerServiceInfo(i) local s=SERVICES[i]; return s[1],s[2],s[3] end
+  function GetTrainerServiceSkillLine() return 'Cooking' end
+  function GetTrainerServiceSkillReq(i) return 'Cooking',SERVICES[i][4],true end
+  function GetTrainerServiceNumReagents() return 0 end
+  function GetTrainerServiceIcon() return 1 end
+  function GetTrainerServiceItemLink() return nil end
+'''
+
+
+def test_trainer():
+    p = Player('Arcbinky', ['Cooking', 60, 75], [], setup=TRAINER_SETUP)
+    p.fire('PLAYER_LOGIN')
+    run([p], steps=20)
+    header = 'Fortbek-LivingFlame'
+    for prefix, msg in [
+        ('GFORGE', 'B|Fortbek-Living Flame'), ('GFORGE', 'P|Fortbek-Living Flame|Cooking:60:75'), ('GFORGE', 'E|Fortbek-Living Flame'),
+        ('GFORGE_R', 'B|Fortbek-Living Flame|Cooking|1'), ('GFORGE_R', 'I|Fortbek-Living Flame|Cooking|Herb Baked Egg'),
+        ('GFORGE_R', 'E|Fortbek-Living Flame|Cooking'), ('GFORGE_R', 'T|Fortbek-Living Flame|Cooking|Artisan Cook~200~'),
+    ]:
+        p.fire('CHAT_MSG_ADDON', prefix, msg, 'GUILD', header)
+    p.fire('TRAINER_SHOW')
+    run([p], steps=5)
+    saved = p.lua.eval('''function()
+      local out={} for name in pairs(GuildForgeDB.recipeInfo.Cooking) do out[#out+1]=name end
+      table.sort(out) return table.concat(out,', ') end''')()
+    check('trainer: rank upgrades are not saved or accepted', saved == 'Herb Baked Egg, Spider Sausage', 'saved: ' + saved)
+    # Draw the Cooking tab with a search, which opens every section, so the Not known rows render.
+    try:
+        rows = p.lua.eval('''function()
+          SlashCmdList.GUILDFORGE('')
+          for _,f in ipairs(frames) do
+            if f.__kind=='CheckButton' and rawget(f,'name')=='Cooking' then f.__scripts.OnClick(f) end
+          end
+          for _,f in ipairs(frames) do
+            if f.__kind=='EditBox' then f:SetText('sausage'); f.__scripts.OnTextChanged(f) end
+          end
+          local names={}
+          for _,f in ipairs(frames) do
+            local label=rawget(f,'name')
+            if f.__kind=='Button' and f.__shown and type(label)=='table' and tostring(rawget(label,'__text')):find('Spider Sausage',1,true) then names[#names+1]=label.__text end
+          end
+          return #names end''')()
+        check('trainer: Not known in guild draws as a plain list', rows == 1, '%d Spider Sausage rows' % rows)
+    except Exception as e:  # noqa: BLE001
+        check('trainer: Not known in guild draws as a plain list', False, str(e).splitlines()[0])
+
+
+if __name__ == '__main__':
+    test_load('GuildForge')
+    test_load('GuildCraft')
+    test_sync('normal realm')
+    test_sync("realm with an apostrophe (Nek'Rosh)", realm="Nek'Rosh")
+    test_sync('Classic answers the chat-lockdown check with 0', restricted=0)
+    test_sync('second player logs in later', realm="Nek'Rosh", late=True)
+    test_trainer()
+    print('\n%d failed' % len(failures) if failures else '\nall passed')
+    sys.exit(1 if failures else 0)

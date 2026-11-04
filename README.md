@@ -90,6 +90,15 @@ git push origin v1.0.0
 
 The tag becomes the addon's version, and the matching `CHANGELOG.md` section becomes the release notes. The ZIP is always attached to a GitHub release; it's also uploaded to CurseForge once the repository has a `CF_API_KEY` secret and the TOC files have `## X-Curse-Project-ID`. `CURSEFORGE.md` holds the project page description.
 
+## Testing
+
+`tests/run_tests.py` runs GuildForge in a stand-in WoW environment with WoW's Lua version. It checks that the addon loads and opens, that two players sync (including realms with punctuation and late logins), and that trainer rank upgrades aren't saved:
+
+```
+python3 -m venv .venv && .venv/bin/pip install lupa
+.venv/bin/python tests/run_tests.py
+```
+
 ## Credits
 
 Created by TheFrosty02, with UI and feature work by kota150.

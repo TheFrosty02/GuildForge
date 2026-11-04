@@ -2,6 +2,14 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.4] - 2026-11-03
+
+### Fixed
+- Profession ranks from trainers (like **Apprentice Cook** and **Journeyman Cook**) showed up in **Not known in guild** as if they were recipes. They're no longer saved or shared, and ones already saved are cleared.
+
+### Changed
+- **Not known in guild** is now a simple list: each recipe shows its icon, name and the skill it needs. Nobody in the guild knows these yet, so there were never reagents to show, and the list no longer does the extra work of checking your bags for them.
+
 ## [1.0.3] - 2026-11-02
 
 ### Fixed

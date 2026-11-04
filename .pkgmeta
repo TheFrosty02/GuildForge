@@ -8,6 +8,7 @@ manual-changelog:
 # Repo-only files that don't belong in the addon download
 ignore:
   - docs
+  - tests
   - README.md
   - CURSEFORGE.md
   - .github

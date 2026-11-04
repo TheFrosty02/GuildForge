@@ -573,6 +573,7 @@ function GF.receiveRecipe(msg,sender)
     local name,req,link=(extra or ''):match('^([^~]+)~(%d*)~([^~]*)$')
     if not name then return end
     name=clean(name)
+    if GF.isRankUpgrade(name,prof) then return end
     recipeInfo[prof]=recipeInfo[prof] or {}
     if not recipeInfo[prof][name] then
       recipeInfo[prof][name]={link=link:match('^[ie]%d+$') and link or nil,reagents={},remote=true,source='Trainer',req=tonumber(req)}
@@ -724,7 +725,22 @@ function GF.scanModernTradeSkill()
   commitScan(prof,recipes,true)
 end
 -- Trainers list recipes nobody may know yet; catalogue them for the "not known in guild" list.
-local RANK_UPGRADES={Apprentice=true,Journeyman=true,Expert=true,Artisan=true,Master=true}
+local RANK_UPGRADES={Apprentice=true,Journeyman=true,Expert=true,Artisan=true,Master=true,Grand=true}
+-- Trainers sell profession ranks as "Tailoring" + "Journeyman", or as "Journeyman Cook"; neither is a recipe.
+function GF.isRankUpgrade(name,prof,subText)
+  if type(name)~='string' then return false end
+  if name==prof or RANK_UPGRADES[subText or ''] then return true end
+  local first=name:match('^(%a+)%s')
+  return first~=nil and RANK_UPGRADES[first]==true
+end
+-- Clears rank upgrades that older scans saved (and shared) as trainer recipes.
+function GF.purgeRankUpgrades()
+  for prof,list in pairs(recipeInfo or {}) do
+    for name,info in pairs(list) do
+      if type(info)=='table' and info.source and GF.isRankUpgrade(name,prof) then list[name]=nil end
+    end
+  end
+end
 function GF.scanTrainer()
   if not (GetNumTrainerServices and GetTrainerServiceInfo) then return end
   local added=0
@@ -736,8 +752,7 @@ function GF.scanTrainer()
     if GetTrainerServiceSkillReq then reqSkill,req=GetTrainerServiceSkillReq(i) end
     if not craftable[prof] then prof=reqSkill end
     -- Rank upgrades are listed under the profession's own name with a rank as the subtext.
-    local isRankUpgrade=name==prof or RANK_UPGRADES[subText or '']
-    if name and category~='header' and craftable[prof] and not isRankUpgrade then
+    if name and category~='header' and craftable[prof] and not GF.isRankUpgrade(name,prof,subText) then
       local recipe=clean(name)
       recipeInfo[prof]=recipeInfo[prof] or {}
       if not recipeInfo[prof][recipe] then
@@ -1228,9 +1243,9 @@ function GF.professionData(prof,term)
   for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
     if not byName[name] then
       d.unknownTotal=d.unknownTotal+1
+      -- Nobody can share reagents for these, so skip the mat counting and leave them out of "Have mats".
       local r={name=name,crafters={},info=info}
-      r.times=craftableTimes(info)
-      if not filter and GF.recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.unknown[#d.unknown+1]=r end
+      if not filter and not matsOnly and GF.recipeMatches(r,prof,term) then d.unknown[#d.unknown+1]=r end
     end
   end
   table.sort(d.unknown,function(a,b)
@@ -1547,6 +1562,33 @@ update=function()
       for _,cd in ipairs(list) do addCooldown(cd) end
     end
   end
+  -- Not known in guild is a plain list: nobody knows these recipes, so there are no reagents to expand.
+  local function addUnknown(prof,r)
+    local info=r.info or {}
+    local b=acquire('recipe')
+    nextStripe(b.stripe,.045)
+    b.toggle:SetTexture(nil)
+    b.icon:SetTexture(GF.recipeIcon(prof,r.info))
+    b.name:SetText(GF.recipeLabel(r.name,r.info))
+    b.crafters:SetText('|cff808080'..(info.req and ('Req '..info.req..'  ·  ') or '')..(info.source or 'Trainer')..'|r')
+    b.mats:SetText('')
+    b:SetScript('OnClick',function()
+      releaseSearchFocus()
+      if IsModifiedClick and IsModifiedClick('CHATLINK') then insertChatLink(info.link) end
+    end)
+    b:SetScript('OnEnter',function(self)
+      if not GF.showLinkTooltip(self,info.link) then
+        GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
+        GameTooltip:AddLine(r.name,1,.82,0)
+      end
+      GameTooltip:AddLine(' ')
+      GameTooltip:AddLine('Nobody in the guild knows this yet',1,.5,.3)
+      if info.req then GameTooltip:AddLine('Learn it from a trainer at skill '..info.req,.8,.8,.8) end
+      GameTooltip:Show()
+    end)
+    b:SetScript('OnLeave',GameTooltip_Hide)
+    place(b,26,8)
+  end
   local function addRecipe(prof,r)
     local id=prof..'|'..r.name
     local open=recipeOpen[id]==true
@@ -1768,7 +1810,7 @@ update=function()
         if d.unknownTotal==0 then
           addNote('Visit a '..prof..' trainer (or open the profession on Forever) to list recipes nobody in the guild knows yet.',16)
         end
-        for _,r in ipairs(d.unknown) do addRecipe(prof,r) end
+        for _,r in ipairs(d.unknown) do addUnknown(prof,r) end
       end
     end
     headerIcon:SetTexture(professionIcons[prof])
@@ -2140,7 +2182,7 @@ StaticPopupDialogs['GUILDFORGE_CLEAR']={
 }
 frame:SetScript('OnEvent',function(_,event,...)
   if event=='PLAYER_LOGIN' then
-    GF.initDB(); selectGuild(); save(); GF.migrateLegacy()
+    GF.initDB(); GF.purgeRankUpgrades(); selectGuild(); save(); GF.migrateLegacy()
     local register=(C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
     if register then register(PREFIX); register(RECIPE_PREFIX) end
     GF.makeMinimapButton()

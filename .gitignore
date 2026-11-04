@@ -14,3 +14,7 @@ Desktop.ini
 # Release builds
 *.zip
 .release/
+
+# Test runner environment
+.venv/
+__pycache__/
