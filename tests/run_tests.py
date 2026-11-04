@@ -204,6 +204,60 @@ def test_profession_swap(offline):
     check(label, ok, 'before %s, after %s' % (before, after))
 
 
+BIG_RECIPES = ['%s of the %s %s' % (a, b, c)
+               for a in ['Pattern', 'Formula', 'Plans', 'Schematic', 'Recipe']
+               for b in ['Ancient', 'Burning', 'Frozen', 'Shadow', 'Radiant', 'Gilded']
+               for c in ['Ward', 'Edge', 'Veil', 'Crown', 'Mantle']]
+
+
+def throttled(players):
+    return sum(int(p.lua.globals().THROTTLED or 0) for p in players)
+
+
+def test_big_profession():
+    a = Player('Arcbinky', ['Tailoring', 300, 300], BIG_RECIPES)
+    b = Player('Fortbek', ['First Aid', 9, 75], ['Linen Bandage'])
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    seconds = None
+    for step in range(2000):
+        for p in (a, b):
+            p.step()
+        deliver([a, b])
+        names = b.lua.globals().GF_TEST_members()['Arcbinky']
+        details = b.lua.eval('function() local n=0 for _,i in pairs(GuildForgeDB.recipeInfo.Tailoring or {}) do if i.remote then n=n+1 end end return n end')()
+        if names and names.recipes == len(BIG_RECIPES) and details == len(BIG_RECIPES):
+            seconds = (step + 1) * 0.3
+            break
+    sent = int(a.lua.globals().SENT_COUNT or 0)
+    ok = seconds is not None and throttled([a, b]) == 0 and sent < 80
+    check('150-recipe profession arrives with names and details, nothing refused', ok,
+          'took %s s, %d messages sent, %d refused' % (seconds, sent, throttled([a, b])))
+    print('     150 recipes: %d messages, %.0f seconds' % (sent, seconds or -1))
+
+
+def test_big_guild():
+    names = ['Member%02d' % i for i in range(12)]
+    roster = 'ROSTER={' + ','.join("{'%s',true}" % n for n in names) + '}'
+    profs = ['Alchemy', 'Blacksmithing', 'Enchanting', 'Engineering', 'Leatherworking', 'Tailoring']
+    players = []
+    for i, n in enumerate(names[:-1]):
+        p = Player(n, [profs[i % len(profs)], 100, 150], ['Recipe %d-%d' % (i, k) for k in range(20)], setup=roster)
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+        players.append(p)
+    run(players, steps=300)
+    late = Player(names[-1], ['Cooking', 50, 75], ['Spiced Wolf Meat'], setup=roster)
+    late.fire('PLAYER_LOGIN')
+    players.append(late)
+    run(players, steps=600)
+    seen = late.members()
+    complete = all(seen.get(n) == (1, 20) for n in names[:-1])
+    check('12-player guild: a late login downloads everyone, nothing refused', complete and throttled(players) == 0,
+          'complete=%s, refused=%d' % (complete, throttled(players)))
+
+
 if __name__ == '__main__':
     test_load('GuildForge')
     test_load('GuildCraft')
@@ -214,5 +268,7 @@ if __name__ == '__main__':
     test_trainer()
     test_profession_swap(offline=False)
     test_profession_swap(offline=True)
+    test_big_profession()
+    test_big_guild()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

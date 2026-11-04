@@ -27,8 +27,7 @@ local selectedCrafter={}
 local sectionCollapsed, recipeOpen = {}, {}
 local recipeQueue, recipePending = {}, {}
 local recipeSent, recipeReceived = 0, 0
-local lastRecipeSend = 0
-local sendFailures, droppedMessages = 0, 0
+local droppedMessages = 0
 local addonVersions = {} -- nameId -> GuildForge version heard this session
 local cdStampSeen = {} -- who -> last cooldown stamp we pulled for
 local updatePending, sinceUpdate, sinceRoster = false, 0, 0
@@ -272,17 +271,12 @@ function GF.messagingBlocked()
   end
   return false
 end
-local heldMessages={}
+-- Outgoing messages wait in one queue per channel and leave at Blizzard's pace (see GF.drainChannel),
+-- so the game never has to refuse one. This queue is the professions channel; recipeQueue is the other.
+GF.profQueue={}
 local function addonSend(payload)
   if not (IsInGuild and IsInGuild()) then return false end
-  local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
-  if not fn then return false end
-  if GF.messagingBlocked() then
-    if #heldMessages<50 then heldMessages[#heldMessages+1]=payload end
-    return false
-  end
-  fn(PREFIX,payload,'GUILD')
-  sent=sent+1
+  GF.profQueue[#GF.profQueue+1]=payload
   return true
 end
 local function announce(force)
@@ -344,7 +338,8 @@ end
 -- Older clients ignore actions they don't know, so every addition stays compatible.
 local craftable={Alchemy=true,Blacksmithing=true,Enchanting=true,Engineering=true,Leatherworking=true,Tailoring=true,Cooking=true,['First Aid']=true}
 local function clean(value)
-  return tostring(value or ''):gsub('[|\r\n]',' '):sub(1,110)
+  -- '~' and '^' separate packed entries, so they can't appear inside a name.
+  return tostring(value or ''):gsub('[|\r\n~%^]',' '):sub(1,110)
 end
 -- Order-sensitive checksum of a sorted recipe list; equal hashes mean the list doesn't need re-sending.
 local function listHash(list)
@@ -355,26 +350,69 @@ local function listHash(list)
   end
   return h
 end
-function GF.recipeSend(payload)
-  if not (IsInGuild and IsInGuild()) then return false end
+-- Returns sent, throttled. Newer clients answer with a result code (0 = sent); older ones with false.
+function GF.rawSend(prefix,payload)
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
-  if not fn then return false end
-  local result=fn(RECIPE_PREFIX,payload,'GUILD')
-  -- Newer clients return false or a non-zero result code when the message was throttled and not sent.
-  if result==false or (type(result)=='number' and result~=0) then return false end
-  recipeSent=recipeSent+1
-  return true
+  if not fn then return false,false end
+  local result=fn(prefix,payload,'GUILD')
+  if result==false then return false,true end
+  if type(result)=='number' and result~=0 then
+    local codes=Enum and Enum.SendAddonMessageResult
+    local throttled=result==3 or result==8 or (codes and (result==codes.AddonMessageThrottle or result==codes.ChannelThrottle))
+    return false,throttled and true or false
+  end
+  return true,false
+end
+-- Blizzard gives each channel a burst of 10 messages, refilling at 1 per second. Each channel here keeps a
+-- slightly smaller allowance (8, refilling at 0.9 per second) and only sends while it has some left.
+GF.channels={{prefix=PREFIX,allowance=8},{prefix=RECIPE_PREFIX,allowance=8}}
+function GF.drainChannel(channel,elapsed,canSend)
+  channel.allowance=math.min(8,channel.allowance+elapsed*0.9)
+  local queue=channel.prefix==PREFIX and GF.profQueue or recipeQueue
+  while canSend and #queue>0 and channel.allowance>=1 do
+    local ok,throttled=GF.rawSend(channel.prefix,queue[1])
+    if ok then
+      table.remove(queue,1); channel.allowance=channel.allowance-1; channel.failures=0
+      if channel.prefix==PREFIX then sent=sent+1 else recipeSent=recipeSent+1 end
+    else
+      if throttled then
+        channel.allowance=0
+      else
+        -- A message that keeps failing for another reason is dropped so it can't stall the queue.
+        channel.failures=(channel.failures or 0)+1
+        if channel.failures>=5 then table.remove(queue,1); channel.failures=0; droppedMessages=droppedMessages+1 end
+        channel.allowance=channel.allowance-1
+      end
+      return
+    end
+  end
+end
+function GF.queuedCount() return #GF.profQueue+#recipeQueue end
+-- Packs items into as few messages as fit in 250 characters: header..item..sep..item...
+function GF.queuePacked(header,items,sep)
+  local chunk
+  for _,item in ipairs(items) do
+    if #header+#item<=250 then
+      if chunk and #chunk+#sep+#item<=250 then
+        chunk=chunk..sep..item
+      else
+        if chunk then recipeQueue[#recipeQueue+1]=chunk end
+        chunk=header..item
+      end
+    end
+  end
+  if chunk then recipeQueue[#recipeQueue+1]=chunk end
 end
 -- Format: D|who|prof|name~i12345 (or e7418 for enchants)~itemID:count,itemID:count
-function GF.detailPayload(who,prof,name)
+-- One recipe's details: name~i12345 (or e7418 for enchants)~itemID:count,itemID:count
+function GF.detailEntry(prof,name)
   local info=recipeInfo and recipeInfo[prof] and recipeInfo[prof][name]
   if not info then return nil end
   local parts={}
   for _,r in ipairs(info.reagents or {}) do
     if r.id then parts[#parts+1]=r.id..':'..(r.n or 1) end
   end
-  local payload='D|'..who..'|'..prof..'|'..clean(name)..'~'..(info.link or '')..'~'..table.concat(parts,',')
-  if #payload<=250 then return payload end
+  return clean(name)..'~'..(info.link or '')..'~'..table.concat(parts,',')
 end
 queueRecipes=function(prof,force)
   local mine=db and db[key()]
@@ -383,16 +421,17 @@ queueRecipes=function(prof,force)
   -- Several guildmates may pull the same list at once; one broadcast serves them all.
   if not force and fullQueuedAt[prof] and now()-fullQueuedAt[prof]<30 then return end
   fullQueuedAt[prof]=now()
+  -- B|count, then names packed several per message (L), then E, then packed details (M).
   local who=key()
+  local names,details={},{}
+  for _,name in ipairs(entries) do
+    names[#names+1]=clean(name)
+    details[#details+1]=GF.detailEntry(prof,name)
+  end
   recipeQueue[#recipeQueue+1]='B|'..who..'|'..prof..'|'..#entries
-  for _,name in ipairs(entries) do
-    recipeQueue[#recipeQueue+1]='I|'..who..'|'..prof..'|'..clean(name)
-  end
+  GF.queuePacked('L|'..who..'|'..prof..'|',names,'~')
   recipeQueue[#recipeQueue+1]='E|'..who..'|'..prof
-  for _,name in ipairs(entries) do
-    local detail=GF.detailPayload(who,prof,name)
-    if detail then recipeQueue[#recipeQueue+1]=detail end
-  end
+  GF.queuePacked('M|'..who..'|'..prof..'|',details,'^')
 end
 function GF.shareAllRecipes()
   local mine=db and db[key()]
@@ -412,11 +451,12 @@ local catalogQueuedAt={}
 function GF.queueCatalog(prof)
   if catalogQueuedAt[prof] and now()-catalogQueuedAt[prof]<30 then return end
   catalogQueuedAt[prof]=now()
+  local entries={}
   for _,name in ipairs(GF.catalogList(prof)) do
     local info=recipeInfo[prof][name]
-    local payload='T|'..key()..'|'..prof..'|'..clean(name)..'~'..(info.req or '')..'~'..(info.link or '')
-    if #payload<=250 then recipeQueue[#recipeQueue+1]=payload end
+    entries[#entries+1]=clean(name)..'~'..(info.req or '')..'~'..(info.link or '')
   end
+  GF.queuePacked('U|'..key()..'|'..prof..'|',entries,'^')
 end
 -- Roll call: one S message per player fingerprints their professions, recipe lists, cooldowns and catalog.
 -- S|who|version;p<professions>;c<cooldown stamp>;k<catalog>;<profIndex>:<count>:<hash>;...
@@ -550,6 +590,33 @@ handleAsk=function(extra)
   if wants:find('k',1,true) then for prof in pairs(craftable) do GF.queueCatalog(prof) end end
 end
 
+function GF.applyDetail(prof,entry)
+  local name,link,reagentText=entry:match('^([^~]+)~([^~]*)~(.*)$')
+  if not name then return end
+  name=clean(name)
+  recipeInfo[prof]=recipeInfo[prof] or {}
+  -- Details scanned on one of your own characters carry reagent names; keep them.
+  local existing=recipeInfo[prof][name]
+  if existing and not existing.remote then return end
+  if not link:match('^[ie]%d+$') then link=nil end
+  local reagents={}
+  for id,count in reagentText:gmatch('(%d+):(%d+)') do
+    if #reagents<12 then reagents[#reagents+1]={id=tonumber(id),n=tonumber(count)} end
+  end
+  recipeInfo[prof][name]={link=link,reagents=reagents,remote=true}
+  requestUpdate()
+end
+function GF.applyCatalog(prof,entry)
+  local name,req,link=entry:match('^([^~]+)~(%d*)~([^~]*)$')
+  if not name then return end
+  name=clean(name)
+  if GF.isRankUpgrade(name,prof) then return end
+  recipeInfo[prof]=recipeInfo[prof] or {}
+  if not recipeInfo[prof][name] then
+    recipeInfo[prof][name]={link=link:match('^[ie]%d+$') and link or nil,reagents={},remote=true,source='Trainer',req=tonumber(req)}
+    requestUpdate()
+  end
+end
 function GF.receiveRecipe(msg,sender)
   if type(msg)~='string' then return end
   local action,who,prof,extra=msg:match('^([^|]+)|([^|]+)|([^|]+)|?(.*)$')
@@ -560,13 +627,17 @@ function GF.receiveRecipe(msg,sender)
     local expected=tonumber(extra)
     if not expected or expected<0 or expected>500 then return end
     recipePending[pendingKey]={items={},seen={},expected=expected}
-  elseif action=='I' then
+  elseif action=='I' or action=='L' then
+    -- I carries one recipe name; L carries several, separated by '~'.
     local pending=recipePending[pendingKey]
-    local item=extra and clean(extra)
-    -- A dropped E/B can splice two broadcasts together; repeats mean the list is unreliable, so skip them.
-    if pending and item and not pending.seen[item] and #pending.items<pending.expected then
-      pending.seen[item]=true
-      pending.items[#pending.items+1]=item
+    if not pending or not extra then return end
+    for raw in extra:gmatch(action=='L' and '[^~]+' or '.+') do
+      local item=clean(raw)
+      -- A dropped E/B can splice two broadcasts together; repeats mean the list is unreliable, so skip them.
+      if not pending.seen[item] and #pending.items<pending.expected then
+        pending.seen[item]=true
+        pending.items[#pending.items+1]=item
+      end
     end
   elseif action=='E' then
     local pending=recipePending[pendingKey]
@@ -582,33 +653,14 @@ function GF.receiveRecipe(msg,sender)
       requestUpdate()
     end
     recipePending[pendingKey]=nil
-  elseif action=='D' then
-    local name,link,reagentText=(extra or ''):match('^([^~]+)~([^~]*)~(.*)$')
-    if not name then return end
-    name=clean(name)
-    recipeInfo[prof]=recipeInfo[prof] or {}
-    -- Details scanned on one of your own characters carry reagent names; keep them.
-    local existing=recipeInfo[prof][name]
-    if existing and not existing.remote then return end
-    if not link:match('^[ie]%d+$') then link=nil end
-    local reagents={}
-    for id,count in reagentText:gmatch('(%d+):(%d+)') do
-      if #reagents<12 then reagents[#reagents+1]={id=tonumber(id),n=tonumber(count)} end
-    end
-    recipeInfo[prof][name]={link=link,reagents=reagents,remote=true}
-    requestUpdate()
+  elseif action=='D' or action=='M' then
+    -- D carries one recipe's details; M carries several, separated by '^'.
+    for entry in (extra or ''):gmatch(action=='M' and '[^%^]+' or '.+') do GF.applyDetail(prof,entry) end
   elseif action=='G' then
     if extra==key() then queueRecipes(prof) end
-  elseif action=='T' then
-    local name,req,link=(extra or ''):match('^([^~]+)~(%d*)~([^~]*)$')
-    if not name then return end
-    name=clean(name)
-    if GF.isRankUpgrade(name,prof) then return end
-    recipeInfo[prof]=recipeInfo[prof] or {}
-    if not recipeInfo[prof][name] then
-      recipeInfo[prof][name]={link=link:match('^[ie]%d+$') and link or nil,reagents={},remote=true,source='Trainer',req=tonumber(req)}
-      requestUpdate()
-    end
+  elseif action=='T' or action=='U' then
+    -- T carries one trainer recipe; U carries several, separated by '^'.
+    for entry in (extra or ''):gmatch(action=='U' and '[^%^]+' or '.+') do GF.applyCatalog(prof,entry) end
   elseif action=='C' then
     local name,remaining=(extra or ''):match('^([^~]+)~(%d+)$')
     if not name then return end
@@ -825,7 +877,7 @@ end
 function GF.doPush()
   save(); fullQueuedAt={}; catalogQueuedAt={}; GF.shareAllRecipes(); checkCooldowns(); queueCooldowns()
   for prof in pairs(craftable) do GF.queueCatalog(prof) end
-  log('Sharing all of your recipes with the guild ('..#recipeQueue..' messages queued).',true)
+  log('Sharing all of your recipes with the guild ('..GF.queuedCount()..' messages queued).',true)
 end
 function GF.doRefresh()
   save(); announce(true); scanRecipes(); checkCooldowns(); requestUpdate()
@@ -1856,7 +1908,7 @@ update=function()
     if not specialTabs[t.name] then t:GetNormalTexture():SetDesaturated(not GF.hasProfession(t.name)) end
   end
   local guild=(IsInGuild and IsInGuild()) and (GetGuildInfo and GetGuildInfo('player') or 'In guild') or 'Not in guild'
-  local queued=#recipeQueue>0 and ('  |  sharing '..#recipeQueue..' queued') or ''
+  local queued=GF.queuedCount()>0 and ('  |  sharing '..GF.queuedCount()..' queued') or ''
   status:SetText(string.format('|cffffd100%s|r  |  %d syncs  |  %d recipe batches%s',guild,received,recipeReceived,queued))
 end
 
@@ -2154,7 +2206,7 @@ SlashCmdList['GUILDFORGE']=function(message)
   if message=='status' then
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
-    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,#recipeQueue,droppedMessages,tostring(GF.messagingBlocked())),true)
+    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.messagingBlocked())),true)
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)
@@ -2274,27 +2326,9 @@ frame:SetScript('OnEvent',function(_,event,...)
   end
 end)
 frame:SetScript('OnUpdate',function(_,elapsed)
-  local blocked=(#recipeQueue>0 or #heldMessages>0) and GF.messagingBlocked()
-  if #heldMessages>0 and not blocked then
-    local held=heldMessages; heldMessages={}
-    for _,payload in ipairs(held) do addonSend(payload) end
-  end
-  if #recipeQueue>0 and now()~=0 and not blocked then
-    lastRecipeSend=lastRecipeSend+elapsed
-    if lastRecipeSend>=0.25 then
-      lastRecipeSend=0
-      if IsInGuild and IsInGuild() then
-        if GF.recipeSend(recipeQueue[1]) then
-          table.remove(recipeQueue,1); sendFailures=0
-        else
-          -- Throttled messages go through on a later try; one that keeps failing is dropped so it can't stall the queue.
-          sendFailures=sendFailures+1
-          if sendFailures>=5 then table.remove(recipeQueue,1); sendFailures=0; droppedMessages=droppedMessages+1 end
-          lastRecipeSend=-1
-        end
-      end
-    end
-  end
+  -- Professions channel first: it carries the small, time-sensitive messages.
+  local canSend=GF.queuedCount()>0 and IsInGuild and IsInGuild() and not GF.messagingBlocked()
+  for _,channel in ipairs(GF.channels) do GF.drainChannel(channel,elapsed,canSend) end
   if GF.announceDue and now()>=GF.announceDue then announce(false) end
   -- Coalesce bursts of sync messages and bag events into one redraw.
   sinceUpdate=sinceUpdate+elapsed

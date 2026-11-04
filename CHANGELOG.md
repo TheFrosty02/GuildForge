@@ -2,6 +2,15 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.6] - 2026-11-04
+
+### Changed
+- **Much faster recipe sharing.** Several recipes now travel in each message instead of one, so a 150-recipe profession reaches the guild with all its reagents in about a minute (62 messages) instead of about five (310 messages).
+- **Stays inside WoW's addon message limit.** Every message now waits its turn and goes out at the pace the game allows (a short burst, then about one per second), so the game no longer refuses messages, even in a big guild when someone logs in and catches up with everyone.
+
+### Note
+- Everyone in the guild should update: GuildForge 1.0.5 and earlier can't read the new packed recipe lists, so they won't receive recipes from 1.0.6 players until they update. 1.0.6 still reads lists from older versions.
+
 ## [1.0.5] - 2026-11-04
 
 ### Fixed

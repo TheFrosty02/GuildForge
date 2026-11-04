@@ -41,7 +41,18 @@ C_Timer={After=function(s,fn) timers[#timers+1]=fn end}
 OUT={}
 C_ChatInfo={
   RegisterAddonMessagePrefix=function() return true end,
-  SendAddonMessage=function(p,m,c) if #m>255 then error('addon message too long') end OUT[#OUT+1]={p,m}; return true end,
+  -- Blizzard's per-prefix allowance: 10 messages, refilling at 1 per second. Over it, the send fails with 3.
+  SendAddonMessage=function(p,m,c)
+    if #m>255 then error('addon message too long') end
+    ALLOWANCE=ALLOWANCE or {}
+    local a=ALLOWANCE[p] or {left=10,at=CLOCK}
+    a.left=math.min(10,a.left+(CLOCK-a.at)); a.at=CLOCK; ALLOWANCE[p]=a
+    if a.left<1 then THROTTLED=(THROTTLED or 0)+1; return 3 end
+    a.left=a.left-1
+    SENT_COUNT=(SENT_COUNT or 0)+1
+    OUT[#OUT+1]={p,m}
+    return 0
+  end,
   SendChatMessage=function() end,
 }
 -- Classic Era answered the Forever lockdown check with a non-boolean; scenarios can mimic that.
