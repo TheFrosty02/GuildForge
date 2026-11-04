@@ -51,6 +51,17 @@ class Player:
         g.GF_TEST_timers()
         g.GF_TEST_tick(dt)
 
+    def view(self, who):
+        info = self.lua.globals().GF_TEST_members()[who]
+        return None if info is None else (info.profNames, info.recipeProfs, info.cooldowns)
+
+    def swap_profession(self, skill, recipes):
+        g = self.lua.globals()
+        g.SKILL = self.lua.table(*skill)
+        g.TS_RECIPES = self.lua.table(*recipes)
+        g.TS_COOLDOWNS = self.lua.table()
+        self.fire('SKILL_LINES_CHANGED')
+
     def members(self):
         table = self.lua.globals().GF_TEST_members()
         return {k: (v.profs, v.recipes) for k, v in table.items()}
@@ -170,6 +181,29 @@ def test_trainer():
         check('trainer: Not known in guild draws as a plain list', False, str(e).splitlines()[0])
 
 
+def test_profession_swap(offline):
+    label = 'profession swap while the guildmate is ' + ('offline' if offline else 'online')
+    a = Player('Arcbinky', ['First Aid', 9, 75], ['Linen Bandage'])
+    b = Player('Fortbek', ['Tailoring', 250, 300], ['Bolt of Linen Cloth', 'Mooncloth'],
+               setup="TS_COOLDOWNS={Mooncloth=7200}")
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    before = a.view('Fortbek')
+    b.swap_profession(['Leatherworking', 1, 75], ['Light Armor Kit'])
+    b.fire('TRADE_SKILL_SHOW')
+    if offline:
+        run([b], steps=200)                    # Arcbinky misses all of it
+        stale = a.view('Fortbek')
+        a.lua.globals().SlashCmdList.GUILDFORGE('sync')   # Arcbinky comes back and syncs
+    run([a, b])
+    after = a.view('Fortbek')
+    expected = ('Leatherworking', 'Leatherworking', '')
+    ok = before == ('Tailoring', 'Tailoring', 'Mooncloth') and after == expected and (not offline or stale == before)
+    check(label, ok, 'before %s, after %s' % (before, after))
+
+
 if __name__ == '__main__':
     test_load('GuildForge')
     test_load('GuildCraft')
@@ -178,5 +212,7 @@ if __name__ == '__main__':
     test_sync('Classic answers the chat-lockdown check with 0', restricted=0)
     test_sync('second player logs in later', realm="Nek'Rosh", late=True)
     test_trainer()
+    test_profession_swap(offline=False)
+    test_profession_swap(offline=True)
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

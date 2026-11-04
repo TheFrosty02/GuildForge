@@ -2,6 +2,13 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.5] - 2026-11-04
+
+### Fixed
+- **Dropping a profession now clears it.** If someone unlearns a profession, its recipes and cooldowns are removed for them and for the whole guild, so they no longer show up as a crafter of something they can't make. Guildmates who were offline catch up the next time they and that player are online together.
+- Profession and skill changes made less than 15 seconds after the last update were never shared until the next login. They're now sent as soon as the 15 seconds are up.
+- A profession update that lost part of itself on the way could make guildmates think a profession was dropped. Incomplete updates are now ignored.
+
 ## [1.0.4] - 2026-11-03
 
 ### Fixed

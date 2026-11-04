@@ -222,12 +222,36 @@ function GF.initDB()
   recipeInfo=GuildForgeDB.recipeInfo
   selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
 end
+-- A record keeps recipes and cooldowns only for professions it still has (after someone drops one).
+-- Returns whether any recipes, and whether any cooldowns, were removed.
+function GF.dropRemovedProfessions(record)
+  local has={}
+  for _,p in ipairs(record.professions or {}) do has[p.name]=true end
+  local recipesDropped,cooldownsDropped=false,false
+  for prof in pairs(record.recipes or {}) do
+    if not has[prof] then record.recipes[prof]=nil; recipesDropped=true end
+  end
+  for prof in pairs(record.recipeUpdated or {}) do
+    if not has[prof] then record.recipeUpdated[prof]=nil end
+  end
+  for name,cd in pairs(record.cooldowns or {}) do
+    if type(cd)=='table' and cd.prof and not has[cd.prof] then record.cooldowns[name]=nil; cooldownsDropped=true end
+  end
+  return recipesDropped,cooldownsDropped
+end
 local function save()
   if not db then GF.initDB() end
   if not playerName() or db==tempMembers then return end
   local name=key()
   local previous=db[name] or {}
-  db[name]={professions=scan(),updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {},cdStamp=previous.cdStamp}
+  local professions=scan()
+  db[name]={professions=professions,updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {},cdStamp=previous.cdStamp}
+  -- Right after login the skill list can briefly be empty; only prune once the game has reported skills.
+  local loaded=#professions>0 or (GetNumSkillLines and GetNumSkillLines()>0)
+  if loaded then
+    local _,cooldownsDropped=GF.dropRemovedProfessions(db[name])
+    if cooldownsDropped then db[name].cdStamp=now() end
+  end
 end
 -- WoW: Forever (Midnight-era API) blocks outgoing addon messages in some situations, such as combat in
 -- instances. Messages wait until the lockdown lifts instead of failing and being dropped.
@@ -264,7 +288,9 @@ end
 local function announce(force)
   if not (IsInGuild and IsInGuild()) then return end
   local t=now()
-  if not force and t-lastBroadcast<15 then return end
+  -- Skill-ups can fire in bursts: wait out the 15 seconds, then send, instead of skipping the change.
+  if not force and t-lastBroadcast<15 then GF.announceDue=lastBroadcast+15; return end
+  GF.announceDue=nil
   save()
   local rec=db[key()]
   if not rec then return end
@@ -272,8 +298,9 @@ local function announce(force)
   for _,p in ipairs(rec.professions) do
     entries[#entries+1]=p.name..':'..p.rank..':'..p.max
   end
-  -- Classic addon messages are small; split into one record per profession.
-  addonSend('B|'..key())
+  -- Classic addon messages are small; split into one record per profession. B carries the count so
+  -- receivers can throw away a set that lost a message instead of thinking a profession was dropped.
+  addonSend('B|'..key()..'|'..#entries)
   for _,entry in ipairs(entries) do addonSend('P|'..key()..'|'..entry) end
   addonSend('E|'..key())
   lastBroadcast=t
@@ -286,7 +313,7 @@ function GF.parseMessage(message,sender)
   if not senderMatches(sender,who) then return end
   if action=='S' then handleSummary(who,extra); return end
   if action=='A' then handleAsk(extra); return end
-  if action=='B' then pending[who]={professions={},updated=now()}; return end
+  if action=='B' then pending[who]={professions={},updated=now(),expected=tonumber(extra)}; return end
   if action=='P' then
     local record=pending[who]
     if not record then return end
@@ -296,14 +323,17 @@ function GF.parseMessage(message,sender)
     end
   elseif action=='E' then
     local record=pending[who]
-    if record then
+    pending[who]=nil
+    if record and (not record.expected or #record.professions==record.expected) then
+      record.expected=nil
       table.sort(record.professions,function(a,b) return a.name<b.name end)
       local old=db[who] or {}
       record.recipes=old.recipes or {}
       record.recipeUpdated=old.recipeUpdated or {}
       record.cooldowns=old.cooldowns or {}
+      -- Forget recipes and cooldowns for professions they no longer have.
+      GF.dropRemovedProfessions(record)
       db[who]=record
-      pending[who]=nil
       received=received+1
       requestUpdate()
     end
@@ -2265,6 +2295,7 @@ frame:SetScript('OnUpdate',function(_,elapsed)
       end
     end
   end
+  if GF.announceDue and now()>=GF.announceDue then announce(false) end
   -- Coalesce bursts of sync messages and bag events into one redraw.
   sinceUpdate=sinceUpdate+elapsed
   if updatePending and sinceUpdate>=0.2 then update() end

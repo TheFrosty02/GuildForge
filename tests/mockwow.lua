@@ -78,6 +78,7 @@ function GetTradeSkillReagentInfo() return 'Linen Cloth',nil,1 end
 function GetTradeSkillReagentItemLink() return '|Hitem:2589::|h[Linen Cloth]|h' end
 function GetTradeSkillItemLink(i) return '|Hitem:'..(1250+i)..'::|h[x]|h' end
 function GetTradeSkillIcon() return 1 end
+function GetTradeSkillCooldown(i) return TS_COOLDOWNS and TS_COOLDOWNS[TS_RECIPES[i]] end
 function GetItemCount() return 0 end
 function GetItemInfo() return nil end
 function GetItemIcon() return 134400 end
@@ -104,9 +105,13 @@ function GF_TEST_members()
   local out={}
   for _,bucket in pairs(GuildForgeDB.guilds or {}) do
     for who,r in pairs(bucket.members) do
-      local recipes=0
-      for _,list in pairs(r.recipes or {}) do recipes=recipes+#list end
-      out[who:match('^[^-]+')]={profs=#(r.professions or {}),recipes=recipes}
+      local recipes,profNames,recipeProfs,cooldowns=0,{},{},{}
+      for prof,list in pairs(r.recipes or {}) do recipes=recipes+#list; if #list>0 then recipeProfs[#recipeProfs+1]=prof end end
+      for _,p in ipairs(r.professions or {}) do profNames[#profNames+1]=p.name end
+      for name in pairs(r.cooldowns or {}) do cooldowns[#cooldowns+1]=name end
+      table.sort(recipeProfs); table.sort(cooldowns)
+      out[who:match('^[^-]+')]={profs=#(r.professions or {}),recipes=recipes,
+        profNames=table.concat(profNames,','),recipeProfs=table.concat(recipeProfs,','),cooldowns=table.concat(cooldowns,',')}
     end
   end
   return out
