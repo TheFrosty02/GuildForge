@@ -29,7 +29,7 @@ class Player:
     """One WoW client running GuildForge."""
 
     def __init__(self, name, skill, recipes, realm='Living Flame', restricted=None, folder='GuildForge', setup='',
-                 surname=None):
+                 surname=None, source=None):
         self.name, self.realm = name, realm
         # Forever puts "First-Surname" on messages, with no realm.
         self.header = name + '-' + surname if surname else None
@@ -46,7 +46,7 @@ class Player:
         if setup:
             self.lua.execute(setup)
         loader = self.lua.eval('function(src,folder) local c,e=loadstring(src,"@GuildForge.lua"); if not c then error(e,0) end; c(folder,{}) end')
-        loader(ADDON, folder)
+        loader(source or ADDON, folder)
 
     def fire(self, *args):
         self.lua.globals().GF_TEST_fire(*args)
@@ -79,8 +79,12 @@ def deliver(players):
         outbox = sender.lua.globals().GF_TEST_outbox()
         for i in range(1, len(outbox) + 1):
             prefix, msg = outbox[i][1], outbox[i][2]
-            header = sender.header or sender.name + '-' + ''.join(ch for ch in sender.realm if ch.isalnum())
+            packed_realm = ''.join(ch for ch in sender.realm if ch.isalnum())
             for player in players:
+                header = sender.header or sender.name + '-' + packed_realm
+                # Forever adds the sender's realm when it differs from the receiver's.
+                if sender.header and player.realm != sender.realm:
+                    header += '-' + packed_realm
                 player.fire('CHAT_MSG_ADDON', prefix, msg, 'GUILD', header)
             moved += 1
     return moved
@@ -269,6 +273,97 @@ def test_forever_surnames():
           'A has %s / %s, B has %s, guilds %s' % (seen_by_a, a.members(), b.members(), guilds))
 
 
+def test_forever_mixed_realms():
+    # Each roster lists the others with their realm when it differs from the viewer's own.
+    def roster(me):
+        entries = []
+        for name, realm in people:
+            packed = '' if realm == me else '-' + ''.join(ch for ch in realm if ch.isalnum())
+            entries.append("{'%s%s',true}" % (name, packed))
+        return 'ROSTER={' + ','.join(entries) + '}'
+    people = [('Kota-Arkbinky', 'CAMWOW US2 Realm 1 PvE'), ('Bob-Smith', 'CAMWOW US2 Realm 2 PvE'),
+              ('Amara-Ironbraid', 'CAMWOW US2 Realm 2 PvE')]
+    old = open(os.path.join(HERE, 'fixtures', 'GuildForge-1.0.7.lua'), encoding='utf-8').read()
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], people[0][1], setup=roster(people[0][1]), surname='Arkbinky')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], people[1][1],
+               setup=roster(people[1][1]), surname='Smith')
+    c = Player('Amara', ['Cooking', 30, 75], ['Spiced Wolf Meat'], people[2][1], setup=roster(people[2][1]),
+               surname='Ironbraid', source=old)
+    for p in (a, b, c):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b, c])
+    for p in (a, b, c):
+        p.fire('GUILD_ROSTER_UPDATE')
+    run([a, b, c], steps=5)
+    seen_a, seen_b = a.members(), b.members()
+    ok = seen_a.get('Bob Smith') == (1, 2) and seen_b.get('Kota Arkbinky') == (1, 1) \
+        and seen_a.get('Amara Ironbraid') == (1, 1) and seen_b.get('Amara Ironbraid') == (1, 1)
+    check('Forever: realm-tagged senders and roster, and a guildmate still on 1.0.7', ok,
+          'Kota sees %s, Bob sees %s' % (seen_a, seen_b))
+
+
+def test_forever_restricted():
+    # Forever answers "restricted" with true almost everywhere while messages still arrive, so that alone
+    # must not stop sharing. Inside an instance it does: messages wait, then everything syncs on leaving.
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Bob Smith',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], realm, restricted=True, setup=roster, surname='Arkbinky')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], realm, restricted=True,
+               setup=roster, surname='Smith')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    open_world = b.members().get('Kota Arkbinky') == (1, 1) and a.members().get('Bob Smith') == (1, 2)
+    check('Forever: "restricted" outside instances does not stop sharing', open_world,
+          'Bob sees %s; Kota sees %s' % (b.members(), a.members()))
+
+    c = Player('Amara', ['Cooking', 30, 75], ['Spiced Wolf Meat'], realm, restricted=True,
+               setup="IN_INSTANCE=true ROSTER={{'Amara Ironbraid',true},{'Bob Smith',true}}", surname='Ironbraid')
+    c.fire('PLAYER_LOGIN')
+    c.fire('TRADE_SKILL_SHOW')
+    run([b, c])
+    sent_inside = c.lua.eval('SENT_COUNT or 0')
+    c.lua.globals().IN_INSTANCE = False
+    run([b, c])
+    check('Forever: held in an instance, full sync after leaving',
+          sent_inside == 0 and b.members().get('Amara Ironbraid') == (1, 1),
+          'sent inside=%d; Bob sees %s' % (sent_inside, b.members()))
+
+
+MODERN_PROFESSIONS = r'''
+  -- Forever's profession window: no GetTradeSkillInfo; C_TradeSkillUI lists recipes only once loaded.
+  GetTradeSkillInfo=nil; GetNumTradeSkills=nil; GetTradeSkillLine=nil
+  LOADED=false
+  local names={[101]='Enchant Bracer - Minor Health',[102]='Runed Copper Rod',[103]='Enchant Chest - Minor Mana'}
+  C_TradeSkillUI={
+    GetBaseProfessionInfo=function() return {professionName='Enchanting'} end,
+    IsTradeSkillLinked=function() return false end, IsTradeSkillGuild=function() return false end,
+    GetAllRecipeIDs=function() if not LOADED then return {} end return {101,102,103} end,
+    GetRecipeInfo=function(id) return {name=names[id],learned=id~=103,icon=1} end,
+    GetRecipeSchematic=function(id) return {outputItemID=id==102 and 6218 or nil,reagentSlotSchematics={}} end,
+  }
+'''
+
+
+def test_forever_profession_window():
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Krystal Clear',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['Enchanting', 5, 75], [], realm, setup=roster + MODERN_PROFESSIONS, surname='Arkbinky')
+    b = Player('Krystal', ['Tailoring', 10, 75], ['Bolt of Linen Cloth'], realm, setup=roster, surname='Clear')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+    run([a, b], steps=40)
+    a.fire('TRADE_SKILL_SHOW')
+    for _ in range(3):  # the first scan, 0.3 s in, sees an empty list
+        a.step()
+    a.lua.globals().LOADED = True
+    run([a, b])
+    check('Forever: recipes that load after the profession window opens are still shared',
+          b.members().get('Kota Arkbinky') == (1, 2), 'Krystal sees %s' % b.members())
+
+
 def test_big_guild():
     names = ['Member%02d' % i for i in range(12)]
     roster = 'ROSTER={' + ','.join("{'%s',true}" % n for n in names) + '}'
@@ -303,5 +398,8 @@ if __name__ == '__main__':
     test_big_profession()
     test_big_guild()
     test_forever_surnames()
+    test_forever_mixed_realms()
+    test_forever_restricted()
+    test_forever_profession_window()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

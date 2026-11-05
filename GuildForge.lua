@@ -144,11 +144,21 @@ local function splitName(name)
   while true do
     local dash=name:find('-',start,true)
     if not dash then break end
-    if normalizeRealm(name:sub(dash+1))==own then return name:sub(1,dash-1),realm() end
+    if normalizeRealm(name:sub(dash+1))==own then name=name:sub(1,dash-1); break end
     start=dash+1
   end
-  -- Forever: what's left is "First", "First Surname" or "First-Surname", all on our realm.
-  if GF.forever then return (name:gsub('%-',' ')),realm() end
+  -- Forever: a name is "First" plus an optional surname ("First Surname" or "First-Surname"). The game
+  -- can add the realm of a character reporting a different one ("First-Surname-CAMWOWUS2Realm2PvE");
+  -- names never contain digits and these realms do, so stop at the first part with a digit.
+  if GF.forever then
+    local parts={}
+    for part in name:gmatch('[^%s%-]+') do
+      if part:find('%d') or #parts==2 then break end
+      parts[#parts+1]=part
+    end
+    if #parts==0 then return nil end
+    return table.concat(parts,' '),realm()
+  end
   local character,server=name:match('^([^-]+)%-(.+)$')
   if not character then return name,realm() end
   return character,server
@@ -268,8 +278,9 @@ end
 function GF.messagingBlocked()
   local C=C_ChatInfo
   if not C then return false end
-  -- Blizzard only restricts addon chat in instances and combat. Outside those, send anyway, so a
-  -- check that misreports (Classic Era returned a non-boolean here) can never freeze sharing.
+  -- Blizzard only restricts addon chat in instances and combat. Outside those, send anyway: Classic Era
+  -- answered these checks with a non-boolean, and Forever answers "restricted" with true nearly all the
+  -- time while messages still arrive, so a check outside those must never freeze sharing.
   local inInstance=IsInInstance and IsInInstance()
   local inCombat=InCombatLockdown and InCombatLockdown()
   if not inInstance and not inCombat then return false end
@@ -368,12 +379,13 @@ function GF.note(line)
   GF.trace[#GF.trace+1]=line
   if #GF.trace>12 then table.remove(GF.trace,1) end
 end
-function GF.safeText(value) if isSecret(value) then return '<hidden>' end return tostring(value) end
+-- Shows a value in chat as plain text: hidden values say so, and '|' is doubled so chat doesn't read it as a code.
+function GF.safeText(value) if isSecret(value) then return '<hidden>' end return (tostring(value):gsub('|','||')) end
 function GF.rawSend(prefix,payload)
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false,false end
   local result=fn(prefix,payload,'GUILD')
-  GF.note('sent '..payload:sub(1,48)..' -> '..tostring(result))
+  GF.note('sent '..GF.safeText(payload:sub(1,48))..' -> '..tostring(result))
   if result==false then return false,true end
   if type(result)=='number' and result~=0 then
     local codes=Enum and Enum.SendAddonMessageResult
@@ -495,9 +507,10 @@ function GF.catalogHash()
   table.sort(all)
   return #all>0 and listHash(all) or 0
 end
-local function sendSummary()
+-- One-message summary of our own data: version, hashes, and index:count:hash per scanned recipe list.
+function GF.summaryPayload()
   local mine=db and db[key()]
-  if not mine then return end
+  if not mine then return nil end
   local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'k'..GF.catalogHash()}
   for index,prof in ipairs(professions) do
     local list=mine.recipes and mine.recipes[prof]
@@ -505,8 +518,11 @@ local function sendSummary()
       parts[#parts+1]=index..':'..#list..':'..listHash(list)
     end
   end
-  local payload='S|'..key()..'|'..table.concat(parts,';')
-  if #payload<=250 then addonSend(payload) end
+  return 'S|'..key()..'|'..table.concat(parts,';')
+end
+local function sendSummary()
+  local payload=GF.summaryPayload()
+  if payload and #payload<=250 then addonSend(payload) end
 end
 function GF.recentlyAsked(askKey,seconds)
   if pullRequestedAt[askKey] and now()-pullRequestedAt[askKey]<seconds then return true end
@@ -872,6 +888,34 @@ function GF.scanTrainer()
   if added>0 then log('Catalogued '..added..' trainer recipes; sharing with the guild.'); sendSummary(); requestUpdate() end
 end
 local scanScheduled=false
+-- /gf scan: run with a profession window open to see what each scanner reads from it.
+function GF.scanReport()
+  local function say(s) log(s,true) end
+  local function v(fn,...) if not fn then return 'missing' end local ok,a=pcall(fn,...); return ok and GF.safeText(a) or 'error' end
+  say('classic window: GetTradeSkillLine='..v(GetTradeSkillLine)..', GetNumTradeSkills='..v(GetNumTradeSkills)
+    ..', GetCraftDisplaySkillLine='..v(GetCraftDisplaySkillLine)..', GetNumCrafts='..v(GetNumCrafts))
+  local T=C_TradeSkillUI or {}
+  local ok,base=pcall(T.GetBaseProfessionInfo or function() end)
+  local ok2,child=pcall(T.GetChildProfessionInfo or function() end)
+  local ok3,ids=pcall(T.GetAllRecipeIDs or function() end)
+  local learned,total=0,0
+  if ok3 and type(ids)=='table' then
+    for _,id in ipairs(ids) do
+      total=total+1
+      local info=T.GetRecipeInfo and T.GetRecipeInfo(id)
+      if info and info.learned then learned=learned+1 end
+    end
+  end
+  say('modern window: base='..GF.safeText(ok and type(base)=='table' and base.professionName)..', child='..GF.safeText(ok2 and type(child)=='table' and child.professionName)
+    ..', recipes='..total..' ('..learned..' learned), linked='..v(T.IsTradeSkillLinked)..', guild='..v(T.IsTradeSkillGuild)..', ready='..v(T.IsTradeSkillReady))
+  say('scanner used: '..((GetTradeSkillInfo or not (T.GetAllRecipeIDs and T.GetRecipeInfo)) and 'classic' or 'modern')
+    ..'; GuildForge shares: '..table.concat((function() local t={} for k in pairs(craftable) do t[#t+1]=k end table.sort(t) return t end)(),', '))
+  scanRecipes()
+  local mine=db and db[key()]
+  local lists={}
+  for prof,list in pairs(mine and mine.recipes or {}) do lists[#lists+1]=prof..' '..#list end
+  say('saved for you after scanning: '..(#lists>0 and table.concat(lists,', ') or 'none'))
+end
 scanRecipes=function()
   scanScheduled=false
   GF.scanTradeSkill()
@@ -886,6 +930,25 @@ local function rollCall(force)
   lastRollCall=now()
   addonSend('V|'..key()..'|'..VERSION..'|r')
   sendSummary()
+end
+-- Once a second: while the game blocks our messages (instances, combat), drop what's queued (it would never
+-- arrive). Returns true when the block lifts, so the caller can check in with the guild and catch up.
+GF.sinceBlockCheck=1
+function GF.watchBlocked(elapsed)
+  GF.sinceBlockCheck=GF.sinceBlockCheck+elapsed
+  if GF.sinceBlockCheck<1 then return end
+  GF.sinceBlockCheck=0
+  local blocked=GF.messagingBlocked()
+  if blocked then
+    if not GF.held then
+      GF.held=true
+    end
+    GF.heldDropped=(GF.heldDropped or 0)+GF.queuedCount()
+    wipe(GF.profQueue); wipe(recipeQueue)
+  elseif GF.held then
+    GF.held=false
+    return true
+  end
 end
 local function doSync()
   save()
@@ -1031,6 +1094,10 @@ function GF.debugReport()
   local iface=GetBuildInfo and select(4,GetBuildInfo())
   say(string.format('client: interface %s (%s); UnitName: %s / %s; realm: %s',GF.safeText(iface),GF.forever and 'Forever' or 'Classic',GF.safeText(first),GF.safeText(second),realm()))
   say('you: '..key()..'  id='..tostring(nameId(key())))
+  local C=C_ChatInfo or {}
+  local function flag(fn) if not fn then return 'n/a' end return GF.safeText(fn()) end
+  say(string.format('sending held: %s (WoW says restricted=%s, lockdown=%s, in instance=%s; restricted is true on Forever even when sending works); messages not sent while held: %d',
+    tostring(GF.messagingBlocked()),flag(C.AreOutgoingAddonChatMessagesRestricted),flag(C.InChatMessagingLockdown),GF.safeText(IsInInstance and IsInInstance()),GF.heldDropped or 0))
   local count=0; for _ in pairs(guildMembers) do count=count+1 end
   say(string.format('roster: %d members read; complete=%s; you found in roster=%s',count,tostring(GF.rosterComplete() and true or false),tostring(guildMembers[nameId(key())]==true)))
   if GetNumGuildMembers and GetGuildRosterInfo then
@@ -1039,10 +1106,19 @@ function GF.debugReport()
       say('   roster #'..i..': "'..GF.safeText(name)..'"  id='..tostring(nameId(name)))
     end
   end
-  for who in pairs(db or {}) do
+  for who,record in pairs(db or {}) do
     local id=nameId(who)
-    say('   saved: "'..who..'"  id='..tostring(id)..(guildMembers[id] and '' or '  |cffff5a5aNOT IN ROSTER (hidden, will be pruned)|r'))
+    local profs,lists={},{}
+    for _,p in ipairs(record.professions or {}) do profs[#profs+1]=p.name end
+    for prof,list in pairs(record.recipes or {}) do lists[#lists+1]=prof..' '..#list end
+    say('   saved: "'..who..'"  professions: '..(#profs>0 and table.concat(profs,', ') or 'none')..'; recipes: '..(#lists>0 and table.concat(lists,', ') or 'none')
+      ..(guildMembers[id] and '' or '  |cffff5a5aNOT IN ROSTER (hidden, will be pruned)|r'))
   end
+  say('your summary: '..GF.safeText(GF.summaryPayload() or 'none yet')..'  (recipe lists show as number:count:hash; none means no profession window scanned yet)')
+  local registered=C_ChatInfo and C_ChatInfo.IsAddonMessagePrefixRegistered
+  say(string.format('prefixes: registered=%s/%s (results %s/%s); addon messages heard: %d from any addon, %d GuildForge',
+    tostring(registered and registered(PREFIX)),tostring(registered and registered(RECIPE_PREFIX)),
+    tostring(GF.prefixResults and GF.prefixResults[1]),tostring(GF.prefixResults and GF.prefixResults[2]),GF.addonEvents or 0,GF.ourEvents or 0))
   say('last messages ('..#GF.trace..'):')
   for _,line in ipairs(GF.trace) do say('   '..line) end
 end
@@ -2271,9 +2347,10 @@ SlashCmdList['GUILDFORGE']=function(message)
   if message=='status' then
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
-    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.messagingBlocked())),true)
+    log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.held==true)),true)
     log(string.format('sharing as %s (%s)',key(),GF.forever and 'WoW Forever' or 'Classic'),true)
   elseif message=='debug' then GF.debugReport()
+  elseif message=='scan' then GF.scanReport()
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)
@@ -2293,7 +2370,7 @@ SlashCmdList['GUILDFORGE']=function(message)
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
 for _,event in ipairs({'PLAYER_LOGIN','SKILL_LINES_CHANGED','CHAT_MSG_ADDON','PLAYER_GUILD_UPDATE',
-  'TRADE_SKILL_SHOW','TRADE_SKILL_UPDATE','TRADE_SKILL_LIST_UPDATE','CRAFT_SHOW','CRAFT_UPDATE',
+  'TRADE_SKILL_SHOW','TRADE_SKILL_UPDATE','TRADE_SKILL_LIST_UPDATE','TRADE_SKILL_DATA_SOURCE_CHANGED','CRAFT_SHOW','CRAFT_UPDATE',
   'TRAINER_SHOW','TRAINER_UPDATE','UNIT_SPELLCAST_SUCCEEDED',
   'GUILD_ROSTER_UPDATE','BAG_UPDATE','GET_ITEM_INFO_RECEIVED','ITEM_DATA_LOAD_RESULT'}) do
   pcall(frame.RegisterEvent,frame,event)
@@ -2333,7 +2410,7 @@ frame:SetScript('OnEvent',function(_,event,...)
   if event=='PLAYER_LOGIN' then
     GF.initDB(); GF.purgeRankUpgrades(); selectGuild(); save(); GF.migrateLegacy()
     local register=(C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix) or RegisterAddonMessagePrefix
-    if register then register(PREFIX); register(RECIPE_PREFIX) end
+    if register then GF.prefixResults={register(PREFIX),register(RECIPE_PREFIX)} end
     GF.makeMinimapButton()
     GF.registerOptions()
     GF.hookTooltips()
@@ -2346,8 +2423,10 @@ frame:SetScript('OnEvent',function(_,event,...)
       checkCooldowns()
       if GuildForgeDB.settings.syncOnLogin then rollCall(true) else sendSummary() end
     end)
-  elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
+  elseif event=='TRADE_SKILL_SHOW' or event=='TRADE_SKILL_UPDATE' or event=='TRADE_SKILL_LIST_UPDATE' or event=='TRADE_SKILL_DATA_SOURCE_CHANGED' or event=='CRAFT_SHOW' or event=='CRAFT_UPDATE' then
     if not scanScheduled then scanScheduled=true; later(0.3,scanRecipes) end
+    -- Forever's profession window opens before its recipes load; look again once they have.
+    if event=='TRADE_SKILL_SHOW' then later(2,scanRecipes); later(5,scanRecipes) end
   elseif event=='TRAINER_SHOW' or event=='TRAINER_UPDATE' then
     later(0.3,GF.scanTrainer)
   elseif event=='UNIT_SPELLCAST_SUCCEEDED' then
@@ -2369,6 +2448,14 @@ frame:SetScript('OnEvent',function(_,event,...)
     requestRedraw()
   elseif event=='CHAT_MSG_ADDON' then
     local prefix,msg,channel,sender=...
+    -- Counts for /gf debug: every addon's messages, and ours that arrive somewhere unexpected.
+    GF.addonEvents=(GF.addonEvents or 0)+1
+    if prefix==PREFIX or prefix==RECIPE_PREFIX then
+      GF.ourEvents=(GF.ourEvents or 0)+1
+      if channel~='GUILD' or type(msg)~='string' or isSecret(msg) then
+        GF.note('got on '..GF.safeText(channel)..' from '..GF.safeText(sender)..(isSecret(msg) and ' (message hidden by the game)' or ''))
+      end
+    end
     if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg:sub(1,2)=='V|' then
       local who,version,flag=msg:match('^V|([^|]+)|?([^|]*)|?(.*)$')
       if who==key() and not isSecret(sender) then GF.learnOwnName(sender); requestUpdate(); return end
@@ -2384,7 +2471,7 @@ frame:SetScript('OnEvent',function(_,event,...)
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       if not isSecret(msg) then
         local named=msg:match('^[^|]+|([^|]+)')
-        GF.note('got from '..GF.safeText(sender)..': '..msg:sub(1,40)..(senderMatches(sender,named) and '' or '  |cffff5a5aREJECTED: sender is not '..tostring(named)..'|r'))
+        GF.note('got from '..GF.safeText(sender)..': '..GF.safeText(msg:sub(1,70))..(senderMatches(sender,named) and '' or '  |cffff5a5aREJECTED: sender is not '..GF.safeText(named)..'|r'))
       end
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender
@@ -2398,7 +2485,8 @@ frame:SetScript('OnEvent',function(_,event,...)
 end)
 frame:SetScript('OnUpdate',function(_,elapsed)
   -- Professions channel first: it carries the small, time-sensitive messages.
-  local canSend=GF.queuedCount()>0 and IsInGuild and IsInGuild() and not GF.messagingBlocked()
+  if GF.watchBlocked(elapsed) and syncReady then rollCall(true) end
+  local canSend=GF.queuedCount()>0 and IsInGuild and IsInGuild() and not GF.held
   for _,channel in ipairs(GF.channels) do GF.drainChannel(channel,elapsed,canSend) end
   if GF.announceDue and now()>=GF.announceDue then announce(false) end
   -- Coalesce bursts of sync messages and bag events into one redraw.

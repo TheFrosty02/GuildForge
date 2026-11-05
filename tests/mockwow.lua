@@ -36,7 +36,8 @@ CLOCK=1762100000
 function time() return math.floor(CLOCK) end
 function GetTime() return CLOCK-1762000000 end
 timers={}
-C_Timer={After=function(s,fn) timers[#timers+1]=fn end}
+-- Timers run once the clock reaches their delay, like the game's.
+C_Timer={After=function(s,fn) timers[#timers+1]={at=CLOCK+(s or 0),fn=fn} end}
 
 OUT={}
 C_ChatInfo={
@@ -69,6 +70,7 @@ PLAYER=PLAYER or 'Arcbinky'
 SKILL=SKILL or {'First Aid',9,75}
 TS_RECIPES=TS_RECIPES or {'Linen Bandage'}
 function GetRealmName() return REALM end
+function IsInInstance() return IN_INSTANCE==true end
 function UnitName() return PLAYER,SURNAME end
 -- INTERFACE=16001 runs as WoW: Forever, where UnitName's second value is a surname.
 function GetBuildInfo() return '1.15.0',1,'',INTERFACE or 11509 end
@@ -112,7 +114,12 @@ tinsert=table.insert
 function GF_TEST_main() for _,f in ipairs(frames) do if f.__scripts.OnEvent then return f end end end
 function GF_TEST_fire(...) local f=GF_TEST_main(); f.__scripts.OnEvent(f,...) end
 function GF_TEST_tick(dt) CLOCK=CLOCK+dt; local f=GF_TEST_main(); f.__scripts.OnUpdate(f,dt) end
-function GF_TEST_timers() local t=timers; timers={}; for _,fn in ipairs(t) do fn() end end
+function GF_TEST_timers()
+  local due,waiting={},{}
+  for _,t in ipairs(timers) do if t.at<=CLOCK then due[#due+1]=t.fn else waiting[#waiting+1]=t end end
+  timers=waiting
+  for _,fn in ipairs(due) do fn() end
+end
 function GF_TEST_outbox() local o=OUT; OUT={}; return o end
 -- Saved member names, without the realm, sorted.
 function GF_TEST_names()

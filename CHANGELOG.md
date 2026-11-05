@@ -2,6 +2,17 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.9] - 2026-11-04
+
+### Fixed
+- **Some guildmates on WoW Forever still couldn't see each other** and showed as "version unknown" in `/gf who`. When two characters report different realms, the game adds the realm to the other's name on messages and in the guild roster ("First-Surname-CAMWOWUS2Realm2PvE"), so the names didn't match. GuildForge now reads a Forever name as just the first name and surname. Guildmates still on 1.0.7 are understood too.
+- On WoW Forever, messages that wait out an instance or combat no longer pile up: they're dropped while blocked, and GuildForge checks in with the guild as soon as you're out, so everything catches up.
+- **Recipes weren't shared when opening a profession on WoW Forever.** Forever's profession window opens before its recipe list loads, so GuildForge read an empty list. It now looks again once the recipes have loaded.
+
+### Changed
+- `/gf debug` now also shows whether GuildForge is set up to receive guild messages and how many addon messages have arrived, and message text in it displays correctly. It also lists each saved guildmate's professions and recipe counts, and the summary you share.
+- `/gf scan` (with a profession window open) shows what GuildForge can read from the window and saves your recipes.
+
 ## [1.0.8] - 2026-11-04
 
 ### Fixed
