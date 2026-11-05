@@ -126,7 +126,11 @@ local function playerName()
   end
   return cachedPlayer
 end
-local function key() return (playerName() or 'Unknown')..'-'..realm() end
+-- Forever doesn't use realms: a character is its name alone, whatever realm the client reports.
+local function key()
+  if GF.forever then return playerName() or 'Unknown' end
+  return (playerName() or 'Unknown')..'-'..realm()
+end
 local function now() return (time and time()) or 0 end
 -- APIs format realms differently ("Living Flame" vs "LivingFlame", or none for your own realm),
 -- so compare characters by a normalized name-realm id instead of the bare name.
@@ -152,6 +156,7 @@ end
 local function nameId(name)
   local character,server=splitName(name)
   if not character then return nil end
+  if GF.forever then return (character:gsub('%s',''):lower()) end
   return character:gsub('%s',''):lower()..'-'..normalizeRealm(server)
 end
 -- "Bob" for your own realm, "Bob-Faerlina" for anyone from another realm; "Bob Smith" on Forever.
@@ -357,10 +362,18 @@ local function listHash(list)
   return h
 end
 -- Returns sent, throttled. Newer clients answer with a result code (0 = sent); older ones with false.
+-- The last few messages sent and received, for /gf debug.
+GF.trace={}
+function GF.note(line)
+  GF.trace[#GF.trace+1]=line
+  if #GF.trace>12 then table.remove(GF.trace,1) end
+end
+function GF.safeText(value) if isSecret(value) then return '<hidden>' end return tostring(value) end
 function GF.rawSend(prefix,payload)
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false,false end
   local result=fn(prefix,payload,'GUILD')
+  GF.note('sent '..payload:sub(1,48)..' -> '..tostring(result))
   if result==false then return false,true end
   if type(result)=='number' and result~=0 then
     local codes=Enum and Enum.SendAddonMessageResult
@@ -914,16 +927,40 @@ function GF.refreshRoster()
   end
 end
 function GF.guildBucketKey()
-  if not (IsInGuild and IsInGuild()) then return 'No guild - '..realm() end
+  if not (IsInGuild and IsInGuild()) then return GF.forever and 'No guild' or 'No guild - '..realm() end
   local name=GetGuildInfo and GetGuildInfo('player')
   if not name or isSecret(name) then return nil end
+  if GF.forever then return name end
   return name..' - '..realm()
+end
+-- 1.0.7 and earlier saved Forever guilds and members with the realm; move them to realmless keys.
+function GF.dropForeverRealms(bucket)
+  local guilds=GuildForgeDB.guilds
+  local old=guilds[bucket..' - '..realm()]
+  if old and old.members then
+    guilds[bucket]=guilds[bucket] or {members={}}
+    for k,v in pairs(old.members) do if not guilds[bucket].members[k] then guilds[bucket].members[k]=v end end
+    guilds[bucket..' - '..realm()]=nil
+  end
+  local members=guilds[bucket] and guilds[bucket].members
+  if not members then return end
+  local renames={}
+  for k in pairs(members) do
+    local character=splitName(k)
+    if character and character~=k then renames[k]=character end
+  end
+  for k,character in pairs(renames) do
+    local record=members[k]; members[k]=nil
+    local current=members[character]
+    if not current or (record.updated or 0)>(current.updated or 0) then members[character]=record end
+  end
 end
 -- Points db at the current guild's members; returns true when the guild changed.
 local function selectGuild()
   if not GuildForgeDB or not playerName() then return false end
   local bucket=GF.guildBucketKey()
   if not bucket or bucket==currentGuild then return false end
+  if GF.forever then GF.dropForeverRealms(bucket) end
   GuildForgeDB.guilds[bucket]=GuildForgeDB.guilds[bucket] or {members={}}
   local members=GuildForgeDB.guilds[bucket].members
   for k,v in pairs(tempMembers) do if not members[k] then members[k]=v end end
@@ -986,6 +1023,28 @@ end
 local function requestRoster()
   if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster()
   elseif GuildRoster then GuildRoster() end
+end
+-- /gf debug: how names are read from the game, the roster and saved data, and the last messages.
+function GF.debugReport()
+  local function say(s) log(s,true) end
+  local first,second=UnitName('player')
+  local iface=GetBuildInfo and select(4,GetBuildInfo())
+  say(string.format('client: interface %s (%s); UnitName: %s / %s; realm: %s',GF.safeText(iface),GF.forever and 'Forever' or 'Classic',GF.safeText(first),GF.safeText(second),realm()))
+  say('you: '..key()..'  id='..tostring(nameId(key())))
+  local count=0; for _ in pairs(guildMembers) do count=count+1 end
+  say(string.format('roster: %d members read; complete=%s; you found in roster=%s',count,tostring(GF.rosterComplete() and true or false),tostring(guildMembers[nameId(key())]==true)))
+  if GetNumGuildMembers and GetGuildRosterInfo then
+    for i=1,math.min(4,GetNumGuildMembers()) do
+      local name=GetGuildRosterInfo(i)
+      say('   roster #'..i..': "'..GF.safeText(name)..'"  id='..tostring(nameId(name)))
+    end
+  end
+  for who in pairs(db or {}) do
+    local id=nameId(who)
+    say('   saved: "'..who..'"  id='..tostring(id)..(guildMembers[id] and '' or '  |cffff5a5aNOT IN ROSTER (hidden, will be pruned)|r'))
+  end
+  say('last messages ('..#GF.trace..'):')
+  for _,line in ipairs(GF.trace) do say('   '..line) end
 end
 function GF.versionLabel(id)
   local version=addonVersions[id]
@@ -2214,6 +2273,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
     log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.messagingBlocked())),true)
     log(string.format('sharing as %s (%s)',key(),GF.forever and 'WoW Forever' or 'Classic'),true)
+  elseif message=='debug' then GF.debugReport()
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)
@@ -2228,7 +2288,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     if minimapButton then minimapButton:SetShown(not GuildForgeDB.minimap.hide) end
     log('Minimap button '..(GuildForgeDB.minimap.hide and 'hidden' or 'shown')..'.',true)
   elseif message=='help' then
-    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters.',true)
+    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters; debug shows how names and messages are read.',true)
   else toggle() end
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
@@ -2322,6 +2382,10 @@ frame:SetScript('OnEvent',function(_,event,...)
       end
     end
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
+      if not isSecret(msg) then
+        local named=msg:match('^[^|]+|([^|]+)')
+        GF.note('got from '..GF.safeText(sender)..': '..msg:sub(1,40)..(senderMatches(sender,named) and '' or '  |cffff5a5aREJECTED: sender is not '..tostring(named)..'|r'))
+      end
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender
       if senderMatches(sender,who) and nameId(who)~=nameId(key()) then GF.markSeen(who) end

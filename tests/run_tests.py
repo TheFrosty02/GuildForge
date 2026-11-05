@@ -244,9 +244,15 @@ def test_big_profession():
 
 def test_forever_surnames():
     roster = "ROSTER={{'Kota-Fields',true},{'Bob-Smith',true}}"
-    realm = 'Classic PvE'
-    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], realm, setup=roster, surname='Fields')
-    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], realm, setup=roster, surname='Smith')
+    # Forever doesn't use realms, but each client still reports one, and guildmates' can differ.
+    # Kota also starts with data saved by 1.0.7, which kept the realm in guild and member names.
+    saved = roster + r'''
+      GuildForgeDB={guilds={['Hidden Leaf - CAMWOW US2 Realm 1 PvE']={members={
+        ['Kota Fields-CAMWOW US2 Realm 1 PvE']={professions={},updated=1,recipes={}},
+        ['Bob Smith-CAMWOW US2 Realm 1 PvE']={professions={},updated=1,recipes={}}}}}}'''
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], 'CAMWOW US2 Realm 1 PvE', setup=saved, surname='Fields')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], 'CAMWOW US2 Realm 2 PvE',
+               setup=roster, surname='Smith')
     for p in (a, b):
         p.fire('PLAYER_LOGIN')
         p.fire('TRADE_SKILL_SHOW')
@@ -257,8 +263,10 @@ def test_forever_surnames():
     seen_by_a = list(a.lua.globals().GF_TEST_names().values())
     ok = seen_by_a == ['Bob Smith', 'Kota Fields'] and b.members().get('Kota Fields') == (1, 1) \
         and a.members().get('Bob Smith') == (1, 2)
-    check('Forever: surnames kept, "First-Surname" senders accepted', ok,
-          'A has %s / %s, B has %s' % (seen_by_a, a.members(), b.members()))
+    guilds = sorted(a.lua.globals().GuildForgeDB.guilds.keys())
+    ok = ok and guilds == ['Hidden Leaf']
+    check('Forever: surnames kept, realms ignored, 1.0.7 data moved', ok,
+          'A has %s / %s, B has %s, guilds %s' % (seen_by_a, a.members(), b.members(), guilds))
 
 
 def test_big_guild():

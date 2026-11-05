@@ -2,6 +2,14 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.8] - 2026-11-04
+
+### Fixed
+- **Sharing still didn't work on WoW Forever.** Forever doesn't use realms, but each character still reports one, and guildmates' can differ. GuildForge put that realm in every name, so a guildmate reporting another realm looked like a different person and their messages were rejected. On Forever, characters are now known by first name and surname only, and data saved by 1.0.7 is moved over automatically.
+
+### Added
+- `/gf debug` shows how GuildForge reads your name, the guild roster and saved members, plus the last messages sent and received, and flags anything it rejects.
+
 ## [1.0.7] - 2026-11-04
 
 ### Fixed
