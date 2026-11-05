@@ -69,11 +69,13 @@ PLAYER=PLAYER or 'Arcbinky'
 SKILL=SKILL or {'First Aid',9,75}
 TS_RECIPES=TS_RECIPES or {'Linen Bandage'}
 function GetRealmName() return REALM end
-function UnitName() return PLAYER end
+function UnitName() return PLAYER,SURNAME end
+-- INTERFACE=16001 runs as WoW: Forever, where UnitName's second value is a surname.
+function GetBuildInfo() return '1.15.0',1,'',INTERFACE or 11509 end
 function IsInGuild() return true end
 function GetGuildInfo() return 'Hidden Leaf','Member',3 end
 ROSTER=ROSTER or {{'Arcbinky',true},{'Fortbek',true}}
-local function packed(name) return name..'-'..REALM:gsub('[^%w]','') end
+local function packed(name) if INTERFACE then return name end return name..'-'..REALM:gsub('[^%w]','') end
 function GetNumGuildMembers() return #ROSTER end
 function GetGuildRosterInfo(i) local r=ROSTER[i]; return packed(r[1]),'Member',3,60,'Warrior','Zone','','',r[2] end
 function GetGuildRosterLastOnline() return 0,0,1,4 end
@@ -112,6 +114,15 @@ function GF_TEST_fire(...) local f=GF_TEST_main(); f.__scripts.OnEvent(f,...) en
 function GF_TEST_tick(dt) CLOCK=CLOCK+dt; local f=GF_TEST_main(); f.__scripts.OnUpdate(f,dt) end
 function GF_TEST_timers() local t=timers; timers={}; for _,fn in ipairs(t) do fn() end end
 function GF_TEST_outbox() local o=OUT; OUT={}; return o end
+-- Saved member names, without the realm, sorted.
+function GF_TEST_names()
+  local out={}
+  for _,bucket in pairs(GuildForgeDB.guilds or {}) do
+    for who in pairs(bucket.members) do out[#out+1]=who:gsub('%-[^-]*$','') end
+  end
+  table.sort(out)
+  return out
+end
 function GF_TEST_members()
   local out={}
   for _,bucket in pairs(GuildForgeDB.guilds or {}) do

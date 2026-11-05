@@ -28,11 +28,16 @@ def check(name, ok, detail=''):
 class Player:
     """One WoW client running GuildForge."""
 
-    def __init__(self, name, skill, recipes, realm='Living Flame', restricted=None, folder='GuildForge', setup=''):
+    def __init__(self, name, skill, recipes, realm='Living Flame', restricted=None, folder='GuildForge', setup='',
+                 surname=None):
         self.name, self.realm = name, realm
+        # Forever puts "First-Surname" on messages, with no realm.
+        self.header = name + '-' + surname if surname else None
         self.lua = lua51.LuaRuntime(unpack_returned_tuples=True)
         g = self.lua.globals()
         g.PLAYER, g.REALM, g.ADDON_FOLDER = name, realm, folder
+        if surname:
+            g.SURNAME, g.INTERFACE = surname, 16001
         g.SKILL = self.lua.table(*skill)
         g.TS_RECIPES = self.lua.table(*recipes)
         if restricted is not None:
@@ -74,7 +79,7 @@ def deliver(players):
         outbox = sender.lua.globals().GF_TEST_outbox()
         for i in range(1, len(outbox) + 1):
             prefix, msg = outbox[i][1], outbox[i][2]
-            header = sender.name + '-' + ''.join(ch for ch in sender.realm if ch.isalnum())
+            header = sender.header or sender.name + '-' + ''.join(ch for ch in sender.realm if ch.isalnum())
             for player in players:
                 player.fire('CHAT_MSG_ADDON', prefix, msg, 'GUILD', header)
             moved += 1
@@ -237,6 +242,25 @@ def test_big_profession():
     print('     150 recipes: %d messages, %.0f seconds' % (sent, seconds or -1))
 
 
+def test_forever_surnames():
+    roster = "ROSTER={{'Kota-Fields',true},{'Bob-Smith',true}}"
+    realm = 'Classic PvE'
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], realm, setup=roster, surname='Fields')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt'], realm, setup=roster, surname='Smith')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    for p in (a, b):
+        p.fire('GUILD_ROSTER_UPDATE')
+    run([a, b], steps=5)
+    seen_by_a = list(a.lua.globals().GF_TEST_names().values())
+    ok = seen_by_a == ['Bob Smith', 'Kota Fields'] and b.members().get('Kota Fields') == (1, 1) \
+        and a.members().get('Bob Smith') == (1, 2)
+    check('Forever: surnames kept, "First-Surname" senders accepted', ok,
+          'A has %s / %s, B has %s' % (seen_by_a, a.members(), b.members()))
+
+
 def test_big_guild():
     names = ['Member%02d' % i for i in range(12)]
     roster = 'ROSTER={' + ','.join("{'%s',true}" % n for n in names) + '}'
@@ -270,5 +294,6 @@ if __name__ == '__main__':
     test_profession_swap(offline=True)
     test_big_profession()
     test_big_guild()
+    test_forever_surnames()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

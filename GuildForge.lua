@@ -113,11 +113,15 @@ local function realm() return (GetRealmName and GetRealmName()) or 'Unknown' end
 local cachedPlayer
 -- WoW: Forever adds surnames, and UnitName may not match the name other players see on our messages.
 -- GF.learnOwnName() records the name the server puts on our own messages, keyed by UnitName.
+-- Forever (interface 16xxx) has one realm per ruleset, and the part after a '-' in a name is a surname, not a realm.
+GF.forever=(function() local iface=GetBuildInfo and select(4,GetBuildInfo()); return type(iface)=='number' and iface>=16000 and iface<17000 end)()
 local function playerName()
   if cachedPlayer then return cachedPlayer end
-  local name=UnitName('player')
+  local name,surname=UnitName('player')
   if name and not isSecret(name) then
     local learned=GuildForgeDB and GuildForgeDB.knownAs and GuildForgeDB.knownAs[name..'-'..realm()]
+    -- On Forever, UnitName's second value is the surname.
+    if GF.forever and type(surname)=='string' and not isSecret(surname) and surname~='' then name=name..' '..surname end
     cachedPlayer=learned or name
   end
   return cachedPlayer
@@ -139,6 +143,8 @@ local function splitName(name)
     if normalizeRealm(name:sub(dash+1))==own then return name:sub(1,dash-1),realm() end
     start=dash+1
   end
+  -- Forever: what's left is "First", "First Surname" or "First-Surname", all on our realm.
+  if GF.forever then return (name:gsub('%-',' ')),realm() end
   local character,server=name:match('^([^-]+)%-(.+)$')
   if not character then return name,realm() end
   return character,server
@@ -148,7 +154,7 @@ local function nameId(name)
   if not character then return nil end
   return character:gsub('%s',''):lower()..'-'..normalizeRealm(server)
 end
--- "Bob" for your own realm, "Bob-Faerlina" for anyone from another realm.
+-- "Bob" for your own realm, "Bob-Faerlina" for anyone from another realm; "Bob Smith" on Forever.
 local function displayName(name)
   local character,server=splitName(name)
   if not character then return name end
@@ -2207,6 +2213,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     local count=0; for _ in pairs(db or {}) do count=count+1 end
     log(string.format('v%s; guild=%s; saved members=%d; messages sent=%d; completed syncs=%d; online with addon=%d',VERSION,tostring(IsInGuild and IsInGuild()),count,sent,received,#activeUsers()),true)
     log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.messagingBlocked())),true)
+    log(string.format('sharing as %s (%s)',key(),GF.forever and 'WoW Forever' or 'Classic'),true)
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
     local users=activeUsers(true)

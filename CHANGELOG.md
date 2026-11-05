@@ -2,6 +2,11 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.7] - 2026-11-04
+
+### Fixed
+- **Sharing didn't work on WoW Forever.** Forever writes names as "First-Surname", and GuildForge read the surname as a realm, so it cut every name down to the first name and rejected guildmates' messages as coming from the wrong sender. Characters are now known by first name and surname, and the list shows them as "First Surname". `/gf status` shows the name you're sharing as.
+
 ## [1.0.6] - 2026-11-04
 
 ### Changed
