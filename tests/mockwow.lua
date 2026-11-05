@@ -121,6 +121,12 @@ function GF_TEST_timers()
   for _,fn in ipairs(due) do fn() end
 end
 function GF_TEST_outbox() local o=OUT; OUT={}; return o end
+-- Names in a profession's Not known in guild list, in display order.
+function GF_TEST_unknown(prof)
+  local out={}
+  for _,r in ipairs(GF_NS.professionData(prof,'').unknown) do out[#out+1]=r.name end
+  return out
+end
 -- Saved member names, without the realm, sorted.
 function GF_TEST_names()
   local out={}

@@ -2,6 +2,21 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.0.10] - 2026-11-05
+
+### Added
+- **Message log window.** Settings → **Message log** (or `/gf log`) shows everything GuildForge sends and receives, live, plus its chat messages, with times. **Copy** puts it, with your version, game client and name at the top, in a box ready to paste into Discord or a GitHub issue. **Clear** starts it fresh. It keeps the last 500 lines.
+
+### Fixed
+- **GuildForge flooded guild addon chat on WoW Forever.** Forever's profession window lists every recipe of a profession, learned or not (262 for Enchanting), and GuildForge shared all the unlearned ones as **Not known in guild**, sending them again whenever a guildmate checked in. Unlearned recipes from your own profession window now only show for you; the shared list comes from trainers again, as on Classic, and a guildmate can ask for it at most once every 10 minutes.
+- The unlearned recipes already spread by 1.0.9 and earlier are cleared once, and lists sent by those versions are ignored. Visiting trainers fills the shared list again.
+
+### Changed
+- **Not known in guild is sorted by profession skill**, lowest first. Trainer recipes use the skill they need ("Req 75"). WoW Forever doesn't tell addons the skill a recipe needs, so recipes from your profession window use the skill where they turn gray ("Gray at 110"), which gives nearly the same order. `/gf scan` shows the gray level of an unlearned recipe so it can be checked.
+
+### Note
+- Everyone should update: 1.0.10 and older versions don't exchange the Not known in guild list.
+
 ## [1.0.9] - 2026-11-04
 
 ### Fixed

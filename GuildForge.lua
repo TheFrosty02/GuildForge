@@ -12,8 +12,10 @@ if GetMetadata and type(addonName)=='string' then
 end
 if type(VERSION)~='string' or VERSION:find('@',1,true) then VERSION='dev' end
 VERSION=VERSION:gsub('^v','')
--- Helper functions live in one table: WoW's Lua allows at most 200 locals at the top of a file.
-local GF={}
+-- Helper functions live in one table: WoW's Lua allows at most 200 locals at the top of a file. It's the
+-- addon's private table, which WoW passes in second (and the tests use to look inside).
+local GF=select(2,...)
+if type(GF)~='table' then GF={} end
 -- Hidden guild addon-message channels: professions and roll calls, and recipe data.
 local PREFIX='GFORGE'
 local RECIPE_PREFIX='GFORGE_R'
@@ -106,6 +108,8 @@ local received, sent=0,0
 local function settings() return GuildForgeDB and GuildForgeDB.settings or {} end
 -- Routine messages respect quiet mode; pass always=true for replies to something the player did.
 local function log(s,always)
+  -- Everything also goes to the message log window, quiet mode or not, without chat colors.
+  if GF.note then GF.note((tostring(s):gsub('|c%x%x%x%x%x%x%x%x',''):gsub('|r',''))) end
   if not always and settings().quiet then return end
   print('|cffd8aa55GuildForge:|r '..tostring(s))
 end
@@ -240,6 +244,16 @@ function GF.initDB()
   if s.tooltips==nil then s.tooltips=true end
   db=tempMembers
   recipeInfo=GuildForgeDB.recipeInfo
+  -- 1.0.9 and earlier shared Forever's whole profession window (every unlearned recipe) as "Not known in
+  -- guild". Clear what was received once; trainer visits fill the list again.
+  if GF.forever and not GuildForgeDB.catalogV2 then
+    for _,list in pairs(recipeInfo) do
+      for name,info in pairs(list) do
+        if type(info)=='table' and info.remote and info.source=='Trainer' then list[name]=nil end
+      end
+    end
+  end
+  GuildForgeDB.catalogV2=true
   selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
 end
 -- A record keeps recipes and cooldowns only for professions it still has (after someone drops one).
@@ -373,19 +387,23 @@ local function listHash(list)
   return h
 end
 -- Returns sent, throttled. Newer clients answer with a result code (0 = sent); older ones with false.
--- The last few messages sent and received, for /gf debug.
+-- Messages sent and received and GuildForge's chat lines, newest last, as plain text: the message log window
+-- shows them all and /gf debug the last few.
 GF.trace={}
 function GF.note(line)
-  GF.trace[#GF.trace+1]=line
-  if #GF.trace>12 then table.remove(GF.trace,1) end
+  GF.trace[#GF.trace+1]=((date and date('%H:%M:%S')) or '')..'  '..line
+  if #GF.trace>500 then table.remove(GF.trace,1) end
+  GF.logDirty=true
 end
+-- A value as plain text for the log: hidden values say so.
+function GF.plainText(value) if isSecret(value) then return '<hidden>' end return tostring(value) end
 -- Shows a value in chat as plain text: hidden values say so, and '|' is doubled so chat doesn't read it as a code.
 function GF.safeText(value) if isSecret(value) then return '<hidden>' end return (tostring(value):gsub('|','||')) end
 function GF.rawSend(prefix,payload)
   local fn=(C_ChatInfo and C_ChatInfo.SendAddonMessage) or SendAddonMessage
   if not fn then return false,false end
   local result=fn(prefix,payload,'GUILD')
-  GF.note('sent '..GF.safeText(payload:sub(1,48))..' -> '..tostring(result))
+  GF.note('sent '..payload..' -> '..tostring(result))
   if result==false then return false,true end
   if type(result)=='number' and result~=0 then
     local codes=Enum and Enum.SendAddonMessageResult
@@ -473,7 +491,8 @@ end
 function GF.catalogList(prof)
   local list={}
   for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
-    if type(info)=='table' and info.source then list[#list+1]=name end
+    -- Shared: recipes seen at trainers. Unlearned recipes from your own profession window only show for you.
+    if type(info)=='table' and info.source and info.source~='Not learned' and not GF.isRankUpgrade(name,prof) then list[#list+1]=name end
   end
   table.sort(list)
   return list
@@ -487,10 +506,10 @@ function GF.queueCatalog(prof)
     local info=recipeInfo[prof][name]
     entries[#entries+1]=clean(name)..'~'..(info.req or '')..'~'..(info.link or '')
   end
-  GF.queuePacked('U|'..key()..'|'..prof..'|',entries,'^')
+  GF.queuePacked('W|'..key()..'|'..prof..'|',entries,'^')
 end
 -- Roll call: one S message per player fingerprints their professions, recipe lists, cooldowns and catalog.
--- S|who|version;p<professions>;c<cooldown stamp>;k<catalog>;<profIndex>:<count>:<hash>;...
+-- S|who|version;p<professions>;c<cooldown stamp>;K<catalog>;<profIndex>:<count>:<hash>;...
 function GF.professionHash(list)
   local parts={}
   for _,p in ipairs(type(list)=='table' and list or {}) do
@@ -511,7 +530,7 @@ end
 function GF.summaryPayload()
   local mine=db and db[key()]
   if not mine then return nil end
-  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'k'..GF.catalogHash()}
+  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'K'..GF.catalogHash()}
   for index,prof in ipairs(professions) do
     local list=mine.recipes and mine.recipes[prof]
     if craftable[prof] and type(list)=='table' and #list>0 then
@@ -543,10 +562,11 @@ handleSummary=function(who,extra)
     elseif kind=='c' then
       local stamp=tonumber(value)
       if stamp and stamp>0 and cdStampSeen[who]~=stamp then cdStampSeen[who]=stamp; wants=wants..'c' end
-    elseif kind=='k' then
+    elseif kind=='K' then
       local hash=tonumber(value)
       -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
-      if hash and hash>0 and hash~=GF.catalogHash() then wants=wants..'k' end
+      -- At most every 10 minutes per guildmate, in case the two lists never quite match.
+      if hash and hash>0 and hash~=GF.catalogHash() and not GF.recentlyAsked('K|'..who,600) then wants=wants..'K' end
     else
       local index,count,hash=token:match('^(%d+):(%d+):(%d+)$')
       local prof=index and professions[tonumber(index)]
@@ -615,14 +635,14 @@ local function queueCooldowns()
   end
 end
 local cooldownsAskedAt=0
--- A guildmate asked us for professions (p), cooldowns (c) or our trainer catalog (k).
+-- A guildmate asked us for professions (p), cooldowns (c) or our trainer catalog (K).
 handleAsk=function(extra)
   local target,wants=(extra or ''):match('^(.-)~(%a*)$')
   if target~=key() then return end
   -- announce() itself skips repeats within 15 seconds, so several askers get one broadcast.
   if wants:find('p',1,true) then announce(false) end
   if wants:find('c',1,true) and now()-cooldownsAskedAt>=30 then cooldownsAskedAt=now(); queueCooldowns() end
-  if wants:find('k',1,true) then for prof in pairs(craftable) do GF.queueCatalog(prof) end end
+  if wants:find('K',1,true) then for prof in pairs(craftable) do GF.queueCatalog(prof) end end
 end
 
 function GF.applyDetail(prof,entry)
@@ -693,9 +713,9 @@ function GF.receiveRecipe(msg,sender)
     for entry in (extra or ''):gmatch(action=='M' and '[^%^]+' or '.+') do GF.applyDetail(prof,entry) end
   elseif action=='G' then
     if extra==key() then queueRecipes(prof) end
-  elseif action=='T' or action=='U' then
-    -- T carries one trainer recipe; U carries several, separated by '^'.
-    for entry in (extra or ''):gmatch(action=='U' and '[^%^]+' or '.+') do GF.applyCatalog(prof,entry) end
+  elseif action=='W' then
+    -- Trainer recipes, separated by '^'. 1.0.9 and earlier sent T/U with Forever's unlearned recipes; ignored.
+    for entry in (extra or ''):gmatch('[^%^]+') do GF.applyCatalog(prof,entry) end
   elseif action=='C' then
     local name,remaining=(extra or ''):match('^([^~]+)~(%d+)$')
     if not name then return end
@@ -832,10 +852,11 @@ function GF.scanModernTradeSkill()
         local link,reagents=GF.schematicDetails(recipeID)
         storeInfo(prof,recipe,link,info.icon,reagents)
         if T.GetRecipeCooldown then GF.noteRecipeCooldown(prof,recipe,tonumber((T.GetRecipeCooldown(recipeID)))) end
-      elseif not recipeInfo[prof][recipe] then
-        -- Unlearned recipes feed the "not known in guild" list.
+      elseif not recipeInfo[prof][recipe] or recipeInfo[prof][recipe].source=='Not learned' then
+        -- Unlearned recipes feed your own "not known in guild" list. Forever doesn't give the skill a recipe
+        -- needs, only the skill where it turns gray (maxTrivialLevel), which orders the list nearly the same.
         local link,reagents=GF.schematicDetails(recipeID)
-        recipeInfo[prof][recipe]={link=link,icon=info.icon,reagents=reagents,remote=true,source='Not learned'}
+        recipeInfo[prof][recipe]={link=link,icon=info.icon,reagents=reagents,remote=true,source='Not learned',gray=tonumber(info.maxTrivialLevel)}
       end
     end
   end
@@ -898,14 +919,15 @@ function GF.scanReport()
   local ok,base=pcall(T.GetBaseProfessionInfo or function() end)
   local ok2,child=pcall(T.GetChildProfessionInfo or function() end)
   local ok3,ids=pcall(T.GetAllRecipeIDs or function() end)
-  local learned,total=0,0
+  local learned,total,sample=0,0,nil
   if ok3 and type(ids)=='table' then
     for _,id in ipairs(ids) do
       total=total+1
       local info=T.GetRecipeInfo and T.GetRecipeInfo(id)
-      if info and info.learned then learned=learned+1 end
+      if info and info.learned then learned=learned+1 elseif info and not sample then sample=info end
     end
   end
+  if sample then say('first unlearned: '..GF.safeText(sample.name)..', turns gray at '..GF.safeText(sample.maxTrivialLevel)) end
   say('modern window: base='..GF.safeText(ok and type(base)=='table' and base.professionName)..', child='..GF.safeText(ok2 and type(child)=='table' and child.professionName)
     ..', recipes='..total..' ('..learned..' learned), linked='..v(T.IsTradeSkillLinked)..', guild='..v(T.IsTradeSkillGuild)..', ready='..v(T.IsTradeSkillReady))
   say('scanner used: '..((GetTradeSkillInfo or not (T.GetAllRecipeIDs and T.GetRecipeInfo)) and 'classic' or 'modern')
@@ -1119,8 +1141,10 @@ function GF.debugReport()
   say(string.format('prefixes: registered=%s/%s (results %s/%s); addon messages heard: %d from any addon, %d GuildForge',
     tostring(registered and registered(PREFIX)),tostring(registered and registered(RECIPE_PREFIX)),
     tostring(GF.prefixResults and GF.prefixResults[1]),tostring(GF.prefixResults and GF.prefixResults[2]),GF.addonEvents or 0,GF.ourEvents or 0))
-  say('last messages ('..#GF.trace..'):')
-  for _,line in ipairs(GF.trace) do say('   '..line) end
+  say('last messages (all of them: /gf log):')
+  for i=math.max(1,#GF.trace-11),#GF.trace do
+    say('   '..GF.trace[i]:gsub('|','||'):gsub('REJECTED','|cffff5a5aREJECTED|r'))
+  end
 end
 function GF.versionLabel(id)
   local version=addonVersions[id]
@@ -1471,8 +1495,10 @@ function GF.professionData(prof,term)
       if not filter and not matsOnly and GF.recipeMatches(r,prof,term) then d.unknown[#d.unknown+1]=r end
     end
   end
+  -- Lowest profession skill first: the skill a recipe needs (trainers), else where it turns gray (Forever's
+  -- profession window); recipes with neither go last.
   table.sort(d.unknown,function(a,b)
-    local ra,rb=a.info.req or 0,b.info.req or 0
+    local ra,rb=a.info.req or a.info.gray or 9999,b.info.req or b.info.gray or 9999
     if ra~=rb then return ra<rb end
     return a.name<b.name
   end)
@@ -1793,7 +1819,8 @@ update=function()
     b.toggle:SetTexture(nil)
     b.icon:SetTexture(GF.recipeIcon(prof,r.info))
     b.name:SetText(GF.recipeLabel(r.name,r.info))
-    b.crafters:SetText('|cff808080'..(info.req and ('Req '..info.req..'  ·  ') or '')..(info.source or 'Trainer')..'|r')
+    local level=info.req and ('Req '..info.req..'  ·  ') or (info.gray and ('Gray at '..info.gray..'  ·  ')) or ''
+    b.crafters:SetText('|cff808080'..level..(info.source or 'Trainer')..'|r')
     b.mats:SetText('')
     b:SetScript('OnClick',function()
       releaseSearchFocus()
@@ -2142,6 +2169,11 @@ function GF.makeSettingsPanel(f,inset)
   clear:SetScript('OnClick',function() StaticPopup_Show('GUILDFORGE_CLEAR') end)
   local clearHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); clearHint:SetPoint('LEFT',clear,'RIGHT',10,0)
   clearHint:SetText('Forget what you have received from guildmates and download it again fresh.')
+  y=y-36
+  local logButton=smallButton(panel,'Message log',180); logButton:SetPoint('TOPLEFT',22,y)
+  logButton:SetScript('OnClick',function() GF.openLog() end)
+  local logHint=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); logHint:SetPoint('LEFT',logButton,'RIGHT',10,0)
+  logHint:SetText('Every GuildForge message as it is sent and received, with a copy button for bug reports.')
   local done=smallButton(panel,'Done',90); done:SetPoint('BOTTOMRIGHT',-16,14)
   local version=panel:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); version:SetPoint('BOTTOMLEFT',22,20)
   version:SetText('GuildForge v'..VERSION)
@@ -2151,6 +2183,72 @@ function GF.makeSettingsPanel(f,inset)
     showScale()
   end)
   return panel
+end
+
+-- Message log: a header for bug reports, then every line GF.note kept.
+function GF.logReport()
+  local iface=GetBuildInfo and select(4,GetBuildInfo())
+  local lines={'GuildForge v'..VERSION..' message log, '..((date and date('%Y-%m-%d %H:%M')) or ''),
+    string.format('client: %s (interface %s); you: %s; guild: %s',GF.forever and 'WoW Forever' or 'Classic Era',GF.plainText(iface),key(),GF.plainText(GF.guildBucketKey())),
+    string.format('messages sent: %d; recipe messages sent: %d; syncs received: %d; queued: %d; held: %s',sent,recipeSent,received,GF.queuedCount(),tostring(GF.held==true)),
+    ''}
+  for _,line in ipairs(GF.trace) do lines[#lines+1]=line end
+  return table.concat(lines,'\n')
+end
+-- WoW reads '|' in text as a formatting code, so the window shows it as '¦'.
+function GF.logText(text) return (text:gsub('|','¦')) end
+function GF.openLog()
+  local f=GF.logWindow
+  if not f then
+    f=CreateFrame('Frame','GuildForgeLogWindow',UIParent,BACKDROP_TEMPLATE)
+    GF.logWindow=f
+    f.since,f.stick,f.copying,f.text=0,false,false,''
+    f:SetSize(660,440); f:SetPoint('CENTER',60,-30); f:SetFrameStrata('DIALOG'); f:SetToplevel(true)
+    f:SetMovable(true); f:EnableMouse(true); f:RegisterForDrag('LeftButton'); f:SetClampedToScreen(true)
+    f:SetScript('OnDragStart',f.StartMoving); f:SetScript('OnDragStop',f.StopMovingOrSizing)
+    if f.SetBackdrop then
+      f:SetBackdrop({bgFile='Interface\\DialogFrame\\UI-DialogBox-Background',edgeFile='Interface\\DialogFrame\\UI-DialogBox-Border',tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}})
+    end
+    local backing=f:CreateTexture(nil,'BACKGROUND',nil,-8)
+    backing:SetPoint('TOPLEFT',11,-12); backing:SetPoint('BOTTOMRIGHT',-12,11); backing:SetColorTexture(.07,.05,.035,1)
+    tinsert(UISpecialFrames,'GuildForgeLogWindow')
+    local title=f:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); title:SetPoint('TOPLEFT',24,-22); title:SetText('GuildForge Message Log')
+    local sub=f:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); sub:SetPoint('LEFT',title,'RIGHT',12,-1)
+    sub:SetText('Live: everything GuildForge sends and receives. ¦ stands for |.')
+    local close=CreateFrame('Button',nil,f,'UIPanelCloseButton'); close:SetPoint('TOPRIGHT',-6,-6)
+    local scroll=CreateFrame('ScrollFrame','GuildForgeLogScroll',f,'UIPanelScrollFrameTemplate')
+    scroll:SetPoint('TOPLEFT',24,-52); scroll:SetPoint('BOTTOMRIGHT',-42,52)
+    local edit=CreateFrame('EditBox',nil,scroll)
+    edit:SetMultiLine(true); edit:SetAutoFocus(false); edit:SetFontObject(ChatFontNormal); edit:SetWidth(590)
+    edit:SetScript('OnEscapePressed',function(self) self:ClearFocus() end)
+    -- Read-only: anything typed is put back.
+    edit:SetScript('OnTextChanged',function(self,userInput) if userInput then self:SetText(f.text or '') end end)
+    -- Leaving the copy view goes back to the live log.
+    edit:SetScript('OnEditFocusLost',function() if f.copying then f.copying=false; f.hint:SetText(''); GF.logDirty=true end end)
+    scroll:SetScrollChild(edit)
+    local copy=smallButton(f,'Copy',100); copy:SetPoint('BOTTOMLEFT',24,20)
+    copy:SetScript('OnClick',function()
+      f.copying=true
+      f.text='```\n'..GF.logText(GF.logReport())..'\n```'
+      edit:SetText(f.text); edit:SetFocus(); edit:HighlightText()
+      f.hint:SetText('Press Ctrl+C (Cmd+C on a Mac) to copy, then paste it into Discord or a GitHub issue.')
+    end)
+    local clear=smallButton(f,'Clear',80); clear:SetPoint('LEFT',copy,'RIGHT',8,0)
+    clear:SetScript('OnClick',function() wipe(GF.trace); f.copying=false; f.hint:SetText(''); GF.logDirty=true end)
+    f.hint=f:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); f.hint:SetPoint('LEFT',clear,'RIGHT',12,0)
+    f:SetScript('OnUpdate',function(self,elapsed)
+      if self.stick then self.stick=nil; scroll:SetVerticalScroll(scroll:GetVerticalScrollRange() or 0) end
+      self.since=self.since+elapsed
+      if self.copying or not GF.logDirty or self.since<0.25 then return end
+      self.since=0; GF.logDirty=false
+      -- Follow new lines while scrolled to the bottom; stay put while reading further up.
+      self.stick=(scroll:GetVerticalScroll() or 0)>=(scroll:GetVerticalScrollRange() or 0)-4
+      self.text=GF.logText(table.concat(GF.trace,'\n'))
+      edit:SetText(self.text)
+    end)
+  end
+  GF.logDirty=true; f.copying=false; f.hint:SetText('')
+  f:Show()
 end
 
 local function makeWindow()
@@ -2350,6 +2448,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     log(string.format('recipe batches received=%d; recipe messages sent=%d; queued=%d; dropped after retries=%d; sending held=%s',recipeReceived,recipeSent,GF.queuedCount(),droppedMessages,tostring(GF.held==true)),true)
     log(string.format('sharing as %s (%s)',key(),GF.forever and 'WoW Forever' or 'Classic'),true)
   elseif message=='debug' then GF.debugReport()
+  elseif message=='log' then GF.openLog()
   elseif message=='scan' then GF.scanReport()
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
@@ -2365,7 +2464,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     if minimapButton then minimapButton:SetShown(not GuildForgeDB.minimap.hide) end
     log('Minimap button '..(GuildForgeDB.minimap.hide and 'hidden' or 'shown')..'.',true)
   elseif message=='help' then
-    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters; debug shows how names and messages are read.',true)
+    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters; debug shows how names and messages are read; log opens the live message log.',true)
   else toggle() end
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
@@ -2453,7 +2552,7 @@ frame:SetScript('OnEvent',function(_,event,...)
     if prefix==PREFIX or prefix==RECIPE_PREFIX then
       GF.ourEvents=(GF.ourEvents or 0)+1
       if channel~='GUILD' or type(msg)~='string' or isSecret(msg) then
-        GF.note('got on '..GF.safeText(channel)..' from '..GF.safeText(sender)..(isSecret(msg) and ' (message hidden by the game)' or ''))
+        GF.note('got on '..GF.plainText(channel)..' from '..GF.plainText(sender)..(isSecret(msg) and ' (message hidden by the game)' or ''))
       end
     end
     if channel=='GUILD' and prefix==PREFIX and type(msg)=='string' and not isSecret(msg) and msg:sub(1,2)=='V|' then
@@ -2471,7 +2570,7 @@ frame:SetScript('OnEvent',function(_,event,...)
     if channel=='GUILD' and (prefix==PREFIX or prefix==RECIPE_PREFIX) and type(msg)=='string' then
       if not isSecret(msg) then
         local named=msg:match('^[^|]+|([^|]+)')
-        GF.note('got from '..GF.safeText(sender)..': '..GF.safeText(msg:sub(1,70))..(senderMatches(sender,named) and '' or '  |cffff5a5aREJECTED: sender is not '..GF.safeText(named)..'|r'))
+        GF.note('got from '..GF.plainText(sender)..': '..msg..(senderMatches(sender,named) and '' or '  REJECTED: sender is not '..tostring(named)))
       end
       -- Count by the name in the payload when the client hides the sender.
       local who=isSecret(sender) and msg:match('^[^|]+|([^|]+)') or sender

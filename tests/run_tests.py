@@ -45,7 +45,7 @@ class Player:
         self.lua.execute(MOCK)
         if setup:
             self.lua.execute(setup)
-        loader = self.lua.eval('function(src,folder) local c,e=loadstring(src,"@GuildForge.lua"); if not c then error(e,0) end; c(folder,{}) end')
+        loader = self.lua.eval('function(src,folder) local c,e=loadstring(src,"@GuildForge.lua"); if not c then error(e,0) end; GF_NS={}; c(folder,GF_NS) end')
         loader(source or ADDON, folder)
 
     def fire(self, *args):
@@ -336,12 +336,14 @@ MODERN_PROFESSIONS = r'''
   -- Forever's profession window: no GetTradeSkillInfo; C_TradeSkillUI lists recipes only once loaded.
   GetTradeSkillInfo=nil; GetNumTradeSkills=nil; GetTradeSkillLine=nil
   LOADED=false
-  local names={[101]='Enchant Bracer - Minor Health',[102]='Runed Copper Rod',[103]='Enchant Chest - Minor Mana'}
+  local names={[101]='Enchant Bracer - Minor Health',[102]='Runed Copper Rod',[103]='Enchant Chest - Minor Mana',
+    [104]='Enchant Bracer - Minor Stamina',[105]='Enchant Cloak - Minor Agility',[106]='Lesser Magic Wand'}
+  GRAY={[103]=60,[104]=130,[105]=110}
   C_TradeSkillUI={
     GetBaseProfessionInfo=function() return {professionName='Enchanting'} end,
     IsTradeSkillLinked=function() return false end, IsTradeSkillGuild=function() return false end,
-    GetAllRecipeIDs=function() if not LOADED then return {} end return {101,102,103} end,
-    GetRecipeInfo=function(id) return {name=names[id],learned=id~=103,icon=1} end,
+    GetAllRecipeIDs=function() if not LOADED then return {} end return {101,102,103,104,105,106} end,
+    GetRecipeInfo=function(id) return {name=names[id],learned=id<103,icon=1,maxTrivialLevel=GRAY[id]} end,
     GetRecipeSchematic=function(id) return {outputItemID=id==102 and 6218 or nil,reagentSlotSchematics={}} end,
   }
 '''
@@ -362,6 +364,76 @@ def test_forever_profession_window():
     run([a, b])
     check('Forever: recipes that load after the profession window opens are still shared',
           b.members().get('Kota Arkbinky') == (1, 2), 'Krystal sees %s' % b.members())
+
+    # The unlearned recipe shows in Kota's own Not known list but isn't shared, so check-ins send no catalog,
+    # and a catalog sent by 1.0.9 or earlier (U) is ignored.
+    def catalog(p):
+        info = p.lua.globals().GuildForgeDB.recipeInfo.Enchanting
+        return [] if info is None else sorted(k for k, v in info.items() if v.source)
+    b.fire('CHAT_MSG_ADDON', 'GFORGE_R', 'U|Kota Arkbinky|Enchanting|Totem of Thunderous Strikes~~i234478', 'GUILD', 'Kota Arkbinky')
+    sent = 0
+    for _ in range(3):
+        b.lua.globals().SlashCmdList.GUILDFORGE('sync')
+        a.lua.globals().SlashCmdList.GUILDFORGE('sync')
+        for _ in range(100):
+            for p in (a, b):
+                p.step()
+            for p in (a, b):
+                sent += sum(1 for m in p.lua.globals().OUT.values() if m[2][:2] in ('W|', 'U|'))
+            deliver([a, b])
+    unlearned = ['Enchant Bracer - Minor Stamina', 'Enchant Chest - Minor Mana', 'Enchant Cloak - Minor Agility',
+                 'Lesser Magic Wand']
+    ok = catalog(a) == unlearned and catalog(b) == [] and sent == 0
+    check('Forever: unlearned recipes stay local, no catalog spam on check-ins', ok,
+          'Kota has %s, Krystal has %s, catalog messages %d' % (catalog(a), catalog(b), sent))
+
+
+def test_unknown_sorted_by_skill():
+    # Trainer recipes sort by the skill they need, Forever's window recipes by where they turn gray, unknown last.
+    setup = r'''GuildForgeDB={recipeInfo={Enchanting={
+      ['Enchant Boots - Minor Speed']={reagents={},remote=true,source='Trainer',req=225},
+      ['Enchant Bracer - Minor Health']={reagents={},remote=true,source='Trainer',req=1},
+      ['Enchant Chest - Minor Mana']={reagents={},remote=true,source='Not learned',gray=60},
+      ['Lesser Magic Wand']={reagents={},remote=true,source='Not learned'},
+      ['Enchant Cloak - Minor Agility']={reagents={},remote=true,source='Not learned',gray=110}}}}'''
+    a = Player('Arcbinky', ['First Aid', 9, 75], ['Linen Bandage'], setup=setup)
+    a.fire('PLAYER_LOGIN')
+    d = a.lua.globals().GF_TEST_unknown('Enchanting')
+    order = [d[i] for i in range(1, len(d) + 1)]
+    expected = ['Enchant Bracer - Minor Health', 'Enchant Chest - Minor Mana', 'Enchant Cloak - Minor Agility',
+                'Enchant Boots - Minor Speed', 'Lesser Magic Wand']
+    check('Not known in guild is sorted by profession skill', order == expected, str(order))
+
+
+def test_message_log():
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Bob Smith',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], realm, setup=roster, surname='Arkbinky')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'], realm, setup=roster, surname='Smith')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    g = a.lua.globals()
+    g.SlashCmdList.GUILDFORGE('log')
+    run([a, b], steps=60)
+    window = g.GuildForgeLogWindow
+    window.__scripts.OnUpdate(window, 1)
+    live = a.lua.eval('GF_NS.logWindow.text') or ''
+    report = a.lua.eval('GF_NS.logText(GF_NS.logReport())')
+    ok = (window.__shown and 'got from Bob-Smith: S¦Bob Smith¦' in live and 'sent V¦Kota Arkbinky¦' in live
+          and '|' not in live and report.startswith('GuildForge v') and 'you: Kota Arkbinky' in report)
+    check('message log window shows live messages and a copyable report', ok, live[:300])
+
+
+def test_forever_catalog_cleared():
+    # 1.0.9 and earlier spread Forever's unlearned recipes as trainer recipes; 1.0.10 clears them once.
+    saved = r'''GuildForgeDB={recipeInfo={Enchanting={['Totem of Thunderous Strikes']={reagents={},remote=true,source='Trainer'}},
+      Cooking={['Spiced Wolf Meat']={reagents={}}}}}'''
+    a = Player('Kota', ['Cooking', 20, 75], ['Spiced Wolf Meat'], 'CAMWOW US2 Realm 1 PvE', setup=saved, surname='Arkbinky')
+    a.fire('PLAYER_LOGIN')
+    info = a.lua.globals().GuildForgeDB.recipeInfo
+    check('Forever: catalog spread by 1.0.9 is cleared once, own recipe details kept',
+          info.Enchanting['Totem of Thunderous Strikes'] is None and info.Cooking['Spiced Wolf Meat'] is not None)
 
 
 def test_big_guild():
@@ -401,5 +473,8 @@ if __name__ == '__main__':
     test_forever_mixed_realms()
     test_forever_restricted()
     test_forever_profession_window()
+    test_forever_catalog_cleared()
+    test_unknown_sorted_by_skill()
+    test_message_log()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)
