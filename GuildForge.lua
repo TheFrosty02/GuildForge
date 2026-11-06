@@ -1299,7 +1299,8 @@ function GF.craftTarget(r)
     if not c.isMe and c.online then return c end
   end
 end
-function GF.requestCraft(r,target)
+-- fromBank: a guild bank craft order was just placed, so say the mats are on their way in the mail.
+function GF.requestCraft(r,target,fromBank)
   if not (target and SendChat) then return end
   local message='[GuildForge] Hi '..target.character..'! Could you craft '..(GF.chatLinkFor(r.info and r.info.link) or r.name)..' for me?'
   local have={}
@@ -1309,9 +1310,92 @@ function GF.requestCraft(r,target)
     if bags>0 then have[#have+1]=math.min(bags,need)..'/'..need..' '..reagentName(reagent) end
   end
   local tail=#have>0 and (' I have '..table.concat(have,', ')..'.') or ' Happy to bring mats or tip.'
-  if #message+#tail>250 then tail=' I have some of the mats.' end
+  if fromBank then tail=' The guild bank is mailing you the materials (Guild Bank Toons craft order).' end
+  if #message+#tail>250 then tail=fromBank and ' The guild bank is mailing you the mats.' or ' I have some of the mats.' end
   SendChat(message..tail,'WHISPER',nil,target.character)
   log('Whispered '..target.character..' about '..r.name..'.',true)
+end
+
+-- Guild Bank Toons (optional addon): shows guild bank stock and asks the bank for missing materials.
+-- Looked up on every use rather than once at login: the bank addon can load late, and a guild gets its
+-- first bank toon mid-session. Everything bank-related hides whenever this returns nil.
+function GF.bankAPI()
+  local api=GuildBankToonsAPI
+  if type(api)~='table' or (tonumber(api.version) or 0)<1 then return nil end
+  -- Hook once, even before HasBank is true, so the window redraws the moment a bank appears.
+  if not GF.bankHooked and type(api.RegisterCallback)=='function' then
+    GF.bankHooked=true
+    pcall(api.RegisterCallback,requestRedraw)
+  end
+  local ok,has=pcall(api.HasBank)
+  if ok and has==true then return api end
+end
+-- How many the guild bank has; nil when there's no bank to ask (or the reagent has no item id).
+function GF.bankCount(reagent)
+  local api=GF.bankAPI()
+  if not (api and reagent and reagent.id) then return nil end
+  local ok,n=pcall(api.Available,reagent.id)
+  return ok and tonumber(n) or 0
+end
+-- What's still missing after your bags, from a list of {reagent=,need=}: {[itemID]=count} or nil.
+-- The bank only deals in item ids, so reagents known by name alone are skipped.
+function GF.bankMissing(list)
+  local items,any={},false
+  for _,n in ipairs(list) do
+    local id,short=n.reagent.id,n.need-(bagCount(n.reagent))
+    if id and short>0 then items[id]=(items[id] or 0)+short; any=true end
+  end
+  return any and items or nil
+end
+-- A recipe's reagents for qty crafts, in the shape shoppingNeeds and bankMissing use.
+function GF.recipeNeeds(info,qty)
+  local list={}
+  for _,r in ipairs(info and info.reagents or {}) do list[#list+1]={reagent=r,need=(r.n or 1)*qty} end
+  return list
+end
+-- True when the bank has at least one of the missing items; greys the button out otherwise.
+function GF.bankHasAny(items)
+  for id in pairs(items or {}) do
+    if (GF.bankCount({id=id}) or 0)>0 then return true end
+  end
+  return false
+end
+function GF.itemCounts(items)
+  local parts={}
+  for id,count in pairs(items) do parts[#parts+1]=count..'× '..reagentName({id=id}) end
+  table.sort(parts)
+  return table.concat(parts,', ')
+end
+-- Places the request and reports it in chat. mailTo makes it a craft order mailed to that crafter.
+-- Returns how many requests were made (0 when none).
+function GF.bankRequest(items,note,mailTo)
+  local api=GF.bankAPI()
+  if not (api and items) then return 0 end
+  local ok,ids,short,reason=pcall(api.Request,items,note,mailTo)
+  if not ok then log('The guild bank request failed: '..tostring(ids),true); return 0 end
+  local made=type(ids)=='table' and #ids or 0
+  short=type(short)=='table' and short or {}
+  if made==0 then
+    log('No guild bank request made'..(reason and (': '..tostring(reason)) or '.'),true)
+    return 0
+  end
+  local got={}
+  for id,count in pairs(items) do
+    local left=count-(tonumber(short[id]) or 0)
+    if left>0 then got[id]=left end
+  end
+  log('Asked the guild bank for '..GF.itemCounts(got)..' ('..note..')'..(mailTo and (', mailed to '..mailTo) or '')
+    ..'. '..made..' request'..(made==1 and '' or 's')..' waiting for approval.',true)
+  if next(short) then log('The guild bank couldn\'t cover: '..GF.itemCounts(short)..'.',true) end
+  return made
+end
+-- Craft order: the bank mails the missing mats to the crafter, then the crafter gets the usual whisper.
+function GF.craftOrder(r,target,qty)
+  local items=GF.bankMissing(GF.recipeNeeds(r.info,qty))
+  if not (target and items) then return 0 end
+  local made=GF.bankRequest(items,'for '..qty..'× '..r.name,target.character)
+  if made>0 then GF.requestCraft(r,target,true) end
+  return made
 end
 
 -- Shopping list: recipes you plan to craft, combined into the mats you still need.
@@ -1670,6 +1754,37 @@ factories.actions=function()
   f.text=fontString(f,'GameFontDisableSmall'); f.text:SetPoint('LEFT',f.b2,'RIGHT',10,0)
   return f
 end
+-- Guild bank buttons, a row of their own so the existing actions keep their place when there's no bank.
+factories.bankActions=function()
+  local f=CreateFrame('Frame',nil,scrollContent)
+  f:SetHeight(26)
+  f.b1=smallButton(f,'',170); f.b1:SetPoint('LEFT',0,0)
+  f.b2=smallButton(f,'',180); f.b2:SetPoint('LEFT',f.b1,'RIGHT',6,0)
+  f.text=fontString(f,'GameFontDisableSmall'); f.text:SetPoint('LEFT',f.b2,'RIGHT',10,0)
+  return f
+end
+-- A guild bank button: greyed out with the reason when there's nothing to ask for, the request in its
+-- tooltip otherwise. Disabled buttons only show tooltips with motion scripts on.
+function GF.setBankButton(b,label,items,why,onClick)
+  b:SetText(label); b:Show()
+  if b.SetMotionScriptsWhileDisabled then b:SetMotionScriptsWhileDisabled(true) end
+  if not why and not GF.bankHasAny(items) then why='The guild bank has none of these right now' end
+  if why then b:Disable() else b:Enable() end
+  b:SetScript('OnClick',function() releaseSearchFocus(); if not why then onClick() end end)
+  b:SetScript('OnEnter',function(self)
+    GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
+    GameTooltip:AddLine(label,1,.82,0)
+    if why then GameTooltip:AddLine(why,1,.5,.3,true) else GameTooltip:AddLine('Asks for '..GF.itemCounts(items),.8,.8,.8,true) end
+    GameTooltip:Show()
+  end)
+  b:SetScript('OnLeave',GameTooltip_Hide)
+end
+-- Guild bank stock after the bag counts on a reagent line; empty when there's no bank.
+function GF.bankText(reagent)
+  local n=GF.bankCount(reagent)
+  if not n then return '' end
+  return '  '..(n>0 and '|cffe7c483' or '|cff808080')..'Guild bank: '..n..'|r'
+end
 factories.shopItem=function()
   local b=CreateFrame('Button',nil,scrollContent)
   b:SetHeight(26)
@@ -1915,7 +2030,7 @@ update=function()
         local bags,bank=bagCount(reagent)
         local need=reagent.n or 1
         local color=bags>=need and '|cff40ff40' or '|cffff5a5a'
-        rb.count:SetText(color..bags..' / '..need..'|r'..(bank>0 and ('  |cff8fb8ff(+'..bank..' in bank)|r') or ''))
+        rb.count:SetText(color..bags..' / '..need..'|r'..(bank>0 and ('  |cff8fb8ff(+'..bank..' in bank)|r') or '')..GF.bankText(reagent))
         rb:SetScript('OnEnter',function(self)
           if reagent.id then
             GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:SetHyperlink('item:'..reagent.id); GameTooltip:Show()
@@ -1950,6 +2065,22 @@ update=function()
     local onList=GuildForgeDB.shopping[GF.shoppingKey(prof,r.name)]
     a.text:SetText(onList and ('On your shopping list: '..onList) or '')
     place(a,28,56)
+    -- Guild bank: ask for what your bags are missing, for as many as are on your shopping list (or one),
+    -- or have it mailed straight to the crafter as a craft order.
+    if reagents and #reagents>0 and GF.bankAPI() then
+      local qty=onList or 1
+      local items=GF.bankMissing(GF.recipeNeeds(r.info,qty))
+      local full=not items and 'Your bags already hold the materials'..(qty>1 and (' for '..qty) or '')
+      local ba=acquire('bankActions')
+      GF.setBankButton(ba.b1,'Get mats from guild bank',items,full,function() GF.bankRequest(items,'for '..qty..'× '..r.name); update() end)
+      if r.mine then ba.b2:Hide()
+      else
+        GF.setBankButton(ba.b2,'Craft order via guild bank',items,full or (not target and 'No crafter online to take the order'),
+          function() GF.craftOrder(r,target,qty); update() end)
+      end
+      ba.text:SetText(qty>1 and ('For '..qty..', from your shopping list') or '')
+      place(ba,28,56)
+    end
     y=y+4
   end
 
@@ -2031,7 +2162,7 @@ update=function()
         if bags>=n.need then text='|cff40ff40'..bags..' / '..n.need..'  done|r'
         else text='|cffff5a5a'..bags..' / '..n.need..'  need '..(n.need-bags)..' more|r' end
         if bank>0 then text=text..'  |cff8fb8ff(+'..bank..' in bank)|r' end
-        rb.count:SetText(text)
+        rb.count:SetText(text..GF.bankText(reagent))
         rb:SetScript('OnEnter',function(self)
           if reagent.id then GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:SetHyperlink('item:'..reagent.id); GameTooltip:Show() end
         end)
@@ -2041,6 +2172,19 @@ update=function()
         end)
         place(rb,19,24)
       end
+    end
+    if #order>0 and GF.bankAPI() then
+      y=y+6
+      local items=GF.bankMissing(order)
+      local names={}
+      for _,e in ipairs(shoppingEntries()) do names[#names+1]=e.qty..'× '..e.name end
+      local note='for '..table.concat(names,', ')
+      if #note>100 then note='for '..#names..' recipes on my shopping list' end
+      local ba=acquire('bankActions')
+      GF.setBankButton(ba.b1,'Get mats from guild bank',items,not items and 'Your bags already hold everything on the list',
+        function() GF.bankRequest(items,note); update() end)
+      ba.b2:Hide(); ba.text:SetText('Asks for everything still needed')
+      place(ba,28,8)
     end
     if #shoppingEntries()>0 then
       y=y+6

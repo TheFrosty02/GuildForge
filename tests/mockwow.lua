@@ -13,6 +13,8 @@ local function newObj(kind,name)
     if k=='Hide' then return function(self) self.__shown=false end end
     if k=='SetShown' then return function(self,v) self.__shown=v and true or false end end
     if k=='IsShown' then return function(self) return self.__shown end end
+    if k=='Enable' or k=='Disable' then return function(self) self.__disabled=(k=='Disable') end end
+    if k=='IsEnabled' then return function(self) return not self.__disabled end end
     if k=='GetWidth' or k=='GetHeight' or k=='GetStringHeight' or k=='GetFrameLevel' or k=='GetEffectiveScale' then return function() return 10 end end
     if k=='GetCenter' then return function() return 0,0 end end
     if k=='HasFocus' or k=='GetChecked' or k=='IsOwned' then return function() return false end end

@@ -5,6 +5,7 @@
 ## Version: @project-version@
 ## X-Curse-Project-ID: 1780823
 ## SavedVariables: GuildForgeDB
+## OptionalDeps: GuildBankToons
 ## IconTexture: Interface\Icons\Trade_BlackSmithing
 ## AddonCompartmentFunc: GuildForge_OnAddonCompartmentClick
 
