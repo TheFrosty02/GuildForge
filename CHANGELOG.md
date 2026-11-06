@@ -2,7 +2,7 @@
 
 All notable changes to GuildForge are listed here.
 
-## [Unreleased]
+## [1.1.1] - 2026-11-05
 
 ### Added
 - **Discord bot** (`companion/`, not part of the addon download): a crafting leaderboard that stays up to date in one message, plus `/levels`, `/crafts` and `/leaderboard` commands whose answers only the asker sees and that delete themselves. See the README for setup.
