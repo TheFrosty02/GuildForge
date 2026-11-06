@@ -2531,11 +2531,33 @@ function GF.registerOptions()
 end
 
 -- Minimap button: a "GF" bubble with a badge counting guildmates online with GuildForge.
+-- It sits on the same ring as LibDBIcon buttons (most addons' minimap buttons) and follows
+-- square minimaps. Which quarters of the minimap are round, per shape (LibDBIcon's table):
+GF.minimapShapes={
+  ROUND={true,true,true,true}, SQUARE={false,false,false,false},
+  ['CORNER-TOPLEFT']={false,false,false,true}, ['CORNER-TOPRIGHT']={false,false,true,false},
+  ['CORNER-BOTTOMLEFT']={false,true,false,false}, ['CORNER-BOTTOMRIGHT']={true,false,false,false},
+  ['SIDE-LEFT']={false,true,false,true}, ['SIDE-RIGHT']={true,false,true,false},
+  ['SIDE-TOP']={false,false,true,true}, ['SIDE-BOTTOM']={true,true,false,false},
+  ['TRICORNER-TOPLEFT']={false,true,true,true}, ['TRICORNER-TOPRIGHT']={true,false,true,true},
+  ['TRICORNER-BOTTOMLEFT']={true,true,false,true}, ['TRICORNER-BOTTOMRIGHT']={true,true,true,false},
+}
+function GF.minimapOffset(degrees)
+  local angle=math.rad(degrees or 200)
+  local x,y=math.cos(angle),math.sin(angle)
+  local q=1
+  if x<0 then q=q+1 end
+  if y>0 then q=q+2 end
+  local shape=GetMinimapShape and GetMinimapShape() or 'ROUND'
+  local round=(GF.minimapShapes[shape] or GF.minimapShapes.ROUND)[q]
+  local w,h=Minimap:GetWidth()/2+5,Minimap:GetHeight()/2+5
+  if round then return x*w,y*h end
+  local dw,dh=math.sqrt(2*w*w)-10,math.sqrt(2*h*h)-10
+  return math.max(-w,math.min(x*dw,w)),math.max(-h,math.min(y*dh,h))
+end
 local function positionMinimap()
-  local angle=math.rad(GuildForgeDB.minimap.angle or 200)
-  local radius=(Minimap:GetWidth()/2)+10
   minimapButton:ClearAllPoints()
-  minimapButton:SetPoint('CENTER',Minimap,'CENTER',math.cos(angle)*radius,math.sin(angle)*radius)
+  minimapButton:SetPoint('CENTER',Minimap,'CENTER',GF.minimapOffset(GuildForgeDB.minimap.angle))
 end
 local function showMinimapTooltip(self)
   GameTooltip:SetOwner(self,'ANCHOR_LEFT')
@@ -2564,10 +2586,10 @@ function GF.makeMinimapButton()
   b:RegisterForClicks('LeftButtonUp','RightButtonUp'); b:RegisterForDrag('LeftButton')
   b:SetHighlightTexture('Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight')
   local bg=b:CreateTexture(nil,'BACKGROUND')
-  bg:SetTexture('Interface\\Minimap\\UI-Minimap-Background'); bg:SetSize(21,21); bg:SetPoint('TOPLEFT',6,-5)
+  bg:SetTexture('Interface\\Minimap\\UI-Minimap-Background'); bg:SetSize(24,24); bg:SetPoint('CENTER')
   bg:SetVertexColor(.35,.2,.08)
   local border=b:CreateTexture(nil,'OVERLAY')
-  border:SetTexture('Interface\\Minimap\\MiniMap-TrackingBorder'); border:SetSize(53,53); border:SetPoint('TOPLEFT')
+  border:SetTexture('Interface\\Minimap\\MiniMap-TrackingBorder'); border:SetSize(50,50); border:SetPoint('TOPLEFT')
   local text=b:CreateFontString(nil,'ARTWORK')
   text:SetFont('Fonts\\FRIZQT__.TTF',10,'OUTLINE'); text:SetPoint('CENTER',bg,'CENTER',0,0)
   text:SetTextColor(1,.82,0); text:SetText('GF')
