@@ -345,6 +345,8 @@ MODERN_PROFESSIONS = r'''
     GetAllRecipeIDs=function() if not LOADED then return {} end return {101,102,103,104,105,106} end,
     GetRecipeInfo=function(id) return {name=names[id],learned=id<103,icon=1,maxTrivialLevel=GRAY[id]} end,
     GetRecipeSchematic=function(id) return {outputItemID=id==102 and 6218 or nil,reagentSlotSchematics={}} end,
+    -- Right after crafting every recipe reports the global cooldown; 102 also has a real one.
+    GetRecipeCooldown=function(id) if id==102 and REAL_CD then return REAL_CD end return 1.4 end,
   }
 '''
 
@@ -425,15 +427,79 @@ def test_message_log():
     check('message log window shows live messages and a copyable report', ok, live[:300])
 
 
+def test_discord_bot():
+    # The companion reads what GuildForge saved and builds the leaderboard and answers from it.
+    import importlib.util
+    import tempfile
+    spec = importlib.util.spec_from_file_location('guildforge_discord', os.path.join(HERE, '..', 'companion', 'guildforge_discord.py'))
+    bot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bot)
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Krystal Clear',true},{'Bob Smith',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['Tailoring', 40, 75], ['Bolt of Linen Cloth'], realm, setup=roster, surname='Arkbinky')
+    b = Player('Krystal', ['Tailoring', 70, 75], ['Bolt of Linen Cloth', 'Brown Linen Shirt', 'Linen Bag'], realm,
+               setup=roster, surname='Clear')
+    c = Player('Bob', ['Cooking', 55, 75], ['Spiced Wolf Meat'], realm, setup=roster, surname='Smith')
+    for p in (a, b, c):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b, c])
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'GuildForge.lua')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(a.lua.globals().GF_TEST_saved())
+        guild = bot.GuildData(*next(iter(bot.merge_members([path]).items())), 0)
+    board = bot.build_leaderboard(guild)
+    tailoring = dict((name, value) for name, value, _ in board['fields'])
+    levels = bot.build_levels(guild, 'krystal')
+    crafts = bot.build_crafts(guild, 'Krystal Clear', search='linen b')
+    ok = (guild.name == 'Hidden Leaf' and list(tailoring) == ['Tailoring (2)', 'Cooking (1)']
+          and tailoring['Tailoring (2)'].startswith('🥇 **Krystal Clear** 70/75 · 3 recipes')
+          and '🥈 **Kota Arkbinky** 40/75' in tailoring['Tailoring (2)']
+          and levels['title'] == "Krystal Clear's professions" and 'Tailoring** 70/75' in levels['description']
+          and crafts['fields'] == [('Tailoring (1)', '• Linen Bag', False)]
+          and bot.build_crafts(guild, 'Nobody')['title'] == 'Character not found')
+    check('Discord bot: leaderboard, /levels and /crafts from saved data', ok,
+          '%s | %s | %s' % (board['fields'], levels, crafts))
+
+
+def test_forever_cooldowns():
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Frosty Ember',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['Enchanting', 5, 75], [], realm, setup=roster + MODERN_PROFESSIONS + ' LOADED=true',
+               surname='Arkbinky')
+    b = Player('Frosty', ['Tailoring', 10, 75], ['Bolt of Linen Cloth'], realm, setup=roster, surname='Ember')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+    a.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    blips = b.view('Kota Arkbinky')[2]
+    a.lua.globals().REAL_CD = 86400
+    a.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    real = b.view('Kota Arkbinky')[2]
+    # Old versions shared the blips as ready cooldowns: ignored unless already tracked.
+    b.fire('CHAT_MSG_ADDON', 'GFORGE_R', 'C|Kota Arkbinky|Enchanting|Enchant Bracer - Minor Health~0', 'GUILD', 'Kota Arkbinky')
+    after_old = b.view('Kota Arkbinky')[2]
+    check('Forever: the global cooldown is not a recipe cooldown; real ones still share', blips == '' and
+          real == 'Runed Copper Rod' and after_old == 'Runed Copper Rod',
+          'blips=%r real=%r after old=%r' % (blips, real, after_old))
+
+
 def test_forever_catalog_cleared():
     # 1.0.9 and earlier spread Forever's unlearned recipes as trainer recipes; 1.0.10 clears them once.
     saved = r'''GuildForgeDB={recipeInfo={Enchanting={['Totem of Thunderous Strikes']={reagents={},remote=true,source='Trainer'}},
-      Cooking={['Spiced Wolf Meat']={reagents={}}}}}'''
+      Cooking={['Spiced Wolf Meat']={reagents={}}}},
+      guilds={['Hidden Leaf']={members={['Frosty Ember']={professions={},recipes={},cooldowns={
+        ['Blue Linen Shirt']={prof='Tailoring',readyAt=0},['Mooncloth']={prof='Tailoring',readyAt=99999999999}}}}}}}'''
     a = Player('Kota', ['Cooking', 20, 75], ['Spiced Wolf Meat'], 'CAMWOW US2 Realm 1 PvE', setup=saved, surname='Arkbinky')
     a.fire('PLAYER_LOGIN')
     info = a.lua.globals().GuildForgeDB.recipeInfo
+    cds = a.lua.globals().GuildForgeDB.guilds['Hidden Leaf'].members['Frosty Ember'].cooldowns
     check('Forever: catalog spread by 1.0.9 is cleared once, own recipe details kept',
           info.Enchanting['Totem of Thunderous Strikes'] is None and info.Cooking['Spiced Wolf Meat'] is not None)
+    check('Forever: recipes wrongly tracked as cooldowns are cleared once, running cooldowns kept',
+          cds['Blue Linen Shirt'] is None and cds['Mooncloth'] is not None)
 
 
 def test_big_guild():
@@ -476,5 +542,7 @@ if __name__ == '__main__':
     test_forever_catalog_cleared()
     test_unknown_sorted_by_skill()
     test_message_log()
+    test_discord_bot()
+    test_forever_cooldowns()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

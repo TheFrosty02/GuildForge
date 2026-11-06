@@ -19,3 +19,7 @@ Desktop.ini
 .venv/
 __pycache__/
 builds/
+
+# Discord bot settings (has the bot token) and state
+companion/guildforge_discord.json
+companion/.guildforge_discord_state.json

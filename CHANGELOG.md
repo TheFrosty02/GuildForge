@@ -2,6 +2,14 @@
 
 All notable changes to GuildForge are listed here.
 
+## [Unreleased]
+
+### Added
+- **Discord bot** (`companion/`, not part of the addon download): a crafting leaderboard that stays up to date in one message, plus `/levels`, `/crafts` and `/leaderboard` commands whose answers only the asker sees and that delete themselves. See the README for setup.
+
+### Fixed
+- **Ordinary recipes showed up as cooldowns on WoW Forever** ("20 of 20 ready"). Right after you craft, Forever reports a few seconds of cooldown on every recipe, and GuildForge took each one for a profession cooldown and shared it. Only cooldowns of a minute or more count now, those wrong entries are cleared once, and ones still sent by older versions are ignored. A real cooldown that was already ready (like Mooncloth) shows again the next time it's used.
+
 ## [1.1.0] - 2026-11-05
 
 ### Added

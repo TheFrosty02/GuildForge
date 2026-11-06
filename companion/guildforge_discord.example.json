@@ -1,0 +1,12 @@
+{
+  "token": "",
+  "server_id": "",
+  "leaderboard_channel_id": "",
+  "wow_dir": "/Applications/World of Warcraft",
+  "account": "",
+  "guild": "",
+  "top": 5,
+  "delete_after": 300,
+  "reply_in_dm": false,
+  "interval": 15
+}

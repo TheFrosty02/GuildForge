@@ -254,6 +254,18 @@ function GF.initDB()
     end
   end
   GuildForgeDB.catalogV2=true
+  -- 1.1.0 and earlier tracked every recipe as a cooldown on Forever (see GF.noteRecipeCooldown). Clear the
+  -- ready ones once; real cooldowns come back the next time they're used.
+  if GF.forever and not GuildForgeDB.cooldownsV2 then
+    for _,guild in pairs(GuildForgeDB.guilds) do
+      for _,record in pairs(guild.members or {}) do
+        for name,cd in pairs(type(record)=='table' and record.cooldowns or {}) do
+          if type(cd)=='table' and (cd.readyAt or 0)<=((time and time()) or 0) then record.cooldowns[name]=nil end
+        end
+      end
+    end
+  end
+  GuildForgeDB.cooldownsV2=true
   selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
 end
 -- A record keeps recipes and cooldowns only for professions it still has (after someone drops one).
@@ -722,6 +734,8 @@ function GF.receiveRecipe(msg,sender)
     remaining=tonumber(remaining)
     local record=db[who] or {professions={},updated=now()}
     record.cooldowns=record.cooldowns or {}
+    -- A "ready" cooldown we never saw running is one of the global-cooldown blips older versions shared.
+    if remaining==0 and not record.cooldowns[clean(name)] then return end
     record.cooldowns[clean(name)]={prof=prof,readyAt=remaining>0 and (now()+remaining) or 0,updated=now()}
     db[who]=record
     requestUpdate()
@@ -767,6 +781,9 @@ local function commitScan(prof,recipes,warnFiltered)
 end
 -- Records a recipe cooldown seen in the trade window; a recipe that had one and now reports none is ready.
 function GF.noteRecipeCooldown(prof,recipe,remaining)
+  -- Forever reports a few seconds on every recipe right after crafting (the global cooldown); profession
+  -- cooldowns run hours or days, so anything under a minute isn't one.
+  if remaining and remaining<60 then remaining=0 end
   local name=GF.cooldownName(recipe)
   local mine=db and db[key()]
   local tracked=mine and mine.cooldowns and mine.cooldowns[name]

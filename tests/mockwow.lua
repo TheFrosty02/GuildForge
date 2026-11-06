@@ -121,6 +121,26 @@ function GF_TEST_timers()
   for _,fn in ipairs(due) do fn() end
 end
 function GF_TEST_outbox() local o=OUT; OUT={}; return o end
+-- GuildForgeDB written out the way WoW writes SavedVariables, for the Discord bot's reader.
+function GF_TEST_saved()
+  local out={}
+  local function value(v,indent)
+    if type(v)=='table' then
+      local keys={}
+      for k in pairs(v) do keys[#keys+1]=k end
+      table.sort(keys,function(a,b) return tostring(a)<tostring(b) end)
+      local lines={'{'}
+      for _,k in ipairs(keys) do
+        local key=type(k)=='number' and ('['..k..']') or ('["'..tostring(k)..'"]')
+        lines[#lines+1]=indent..'\t'..key..' = '..value(v[k],indent..'\t')..','
+      end
+      lines[#lines+1]=indent..'}'
+      return table.concat(lines,'\n')
+    elseif type(v)=='string' then return string.format('%q',v)
+    else return tostring(v) end
+  end
+  return '\nGuildForgeDB = '..value(GuildForgeDB,'')..'\n'
+end
 -- Names in a profession's Not known in guild list, in display order.
 function GF_TEST_unknown(prof)
   local out={}

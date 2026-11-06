@@ -72,6 +72,50 @@ Your guildmates need GuildForge too — the more people running it, the more com
 | `/guildforge clear` | Forget received guild data and download it again fresh |
 | `/guildforge who` | List guildmates online with GuildForge and their versions |
 | `/guildforge status` | Print sync counters |
+| `/guildforge log` | Open the live message log (also in Settings), with Copy for bug reports |
+| `/guildforge debug` | Print how your name, the roster and recent messages are read |
+| `/guildforge scan` | With a profession window open: show what GuildForge can read from it, and save your recipes |
+
+## Discord bot
+
+The bot in [`companion/`](companion/) brings GuildForge to your guild's Discord:
+
+- **A leaderboard that's always there.** One message in a channel of your choice lists the top crafters of every profession with their skill and recipe count. The bot edits that same message whenever the data changes, so it never piles up new posts.
+- **`/levels [character]`**: one character's professions with progress bars, or everyone's levels.
+- **`/crafts character [profession] [search]`**: what a character can craft, optionally one profession or recipes containing a word. Character and profession names autocomplete.
+- **`/leaderboard [profession]`**: the leaderboard, or a full ranking for one profession.
+
+Answers are only visible to the person who asked (or sent to them by DM with `reply_in_dm`), nothing shows in the channel for anyone else, and each answer is deleted after `delete_after` seconds (5 minutes by default, at most 14).
+
+### Who runs it
+
+WoW addons can't reach the internet, so the bot reads the data GuildForge saves on the PC it runs on (`SavedVariables/GuildForge.lua`), which the game writes when you **log out or `/reload`**. So:
+
+- **One person runs it**: usually an officer who plays often. Nobody else needs anything besides GuildForge itself; guildmates just use the commands in Discord.
+- It runs on **the same PC that plays WoW** with GuildForge, signed in to a character in the guild. That game collects everyone's professions from guild chat while it's online; the bot picks them up at the next logout or `/reload` and updates the leaderboard within seconds.
+- The bot only answers while the script is running. Leave it running while you play, or on a PC that stays on (it still needs WoW and GuildForge on that PC for fresh data).
+
+### Setting it up
+
+1. **Make the bot** at <https://discord.com/developers/applications> → **New Application** (name it GuildForge) → **Bot** → **Reset Token** and copy the token. Keep it secret: anyone with it controls the bot. No privileged intents are needed.
+2. **Invite it**: **OAuth2** → **URL Generator** → scopes `bot` and `applications.commands`; bot permissions **View Channels**, **Send Messages**, **Embed Links** and **Read Message History**. Open the generated link and pick your server.
+3. **Get the IDs**: in Discord, **User Settings → Advanced → Developer Mode** on, then right-click your server → **Copy Server ID**, and right-click the leaderboard channel → **Copy Channel ID**.
+4. **Install Python 3.8 or newer** (python.org; on Windows tick *Add python.exe to PATH*), then in the `companion` folder:
+   ```
+   pip install -r requirements.txt
+   ```
+5. **Settings**: copy `guildforge_discord.example.json` to `guildforge_discord.json` and fill in `token`, `server_id`, `leaderboard_channel_id` and `wow_dir` (your World of Warcraft folder, for example `C:/Program Files (x86)/World of Warcraft`). That file is git-ignored.
+6. **Check it** without touching Discord; this prints the leaderboard and sample answers from your saved data:
+   ```
+   python3 guildforge_discord.py --dry-run
+   ```
+7. **Run it**:
+   ```
+   python3 guildforge_discord.py
+   ```
+   It posts the leaderboard and the commands appear in your server right away. Keep the window open; close it to stop the bot.
+
+Other settings: `guild` (if your saved data has more than one guild), `account` (if several WoW accounts play on that PC; by default every account's data is merged, newest first), `top` (crafters per profession on the leaderboard, default 5), `delete_after`, `reply_in_dm`, and `interval` (how often to check for a new save, in seconds). On Windows use `python` instead of `python3`.
 
 ## Compatibility
 
