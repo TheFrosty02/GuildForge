@@ -30,6 +30,14 @@ Collect the recipes you plan to make and GuildForge combines them into one list 
 
 ![Shopping list](docs/screenshots/shopping-list.webp)
 
+### Guild bank materials (with Guild Bank Toons)
+If your guild uses the [Guild Bank Toons](https://github.com/kota150/GuildBankToons) addon, GuildForge works with it; without it, none of this shows.
+
+- **Guild bank stock** next to your own counts on every reagent line (`Guild bank: 120`).
+- **Get mats from guild bank** on an expanded recipe (and on the Shopping List, for every material still needed) asks the bank for what your bags are missing. A recipe on your shopping list asks for that many crafts.
+- **Craft order via guild bank** on a recipe you can't make: the bank mails the missing materials to the crafter, who is told to craft it and mail it to you, and GuildForge whispers them as **Ask a crafter** does.
+- Requests wait for a bank officer's approval in Guild Bank Toons. Chat lists what was requested and anything the bank couldn't cover; the buttons are greyed out when the bank has none of it.
+
 ### And more
 - **Search** recipes, crafters, professions and reagents (try "linen") across the whole guild, plus a **Have mats** filter for things you can craft right now.
 - **Item tooltips** show which guildmates craft an item and which recipes use it.
@@ -136,7 +144,7 @@ The tag becomes the addon's version, and the matching `CHANGELOG.md` section bec
 
 ## Testing
 
-`tests/run_tests.py` runs GuildForge in a stand-in WoW environment with WoW's Lua version. It checks that the addon loads and opens, that two players sync (including realms with punctuation and late logins), and that trainer rank upgrades aren't saved:
+`tests/run_tests.py` runs GuildForge in a stand-in WoW environment with WoW's Lua version. It checks that the addon loads and opens, that two players sync (including realms with punctuation and late logins), that trainer rank upgrades aren't saved, and the Guild Bank Toons integration against a stub of its API (hidden without a bank, stock shown, missing amounts requested, craft orders sent to the crafter):
 
 ```
 python3 -m venv .venv && .venv/bin/pip install lupa

@@ -2,6 +2,15 @@
 
 All notable changes to GuildForge are listed here.
 
+## [Unreleased]
+
+### Added
+- **Guild bank materials** with the Guild Bank Toons addon (optional). When it's installed and your guild has a bank toon or shared guild bank tab, reagent lines show how many the guild bank has (`Guild bank: 120`), and:
+  - **Get mats from guild bank** on an expanded recipe asks the bank for what your bags are missing, for as many as are on your shopping list (or one). The Shopping List has the same button for every material still needed.
+  - **Craft order via guild bank** on a recipe you don't know has the bank mail the missing materials straight to the crafter GuildForge would ask, and whispers them as usual, saying the mats are coming from the guild bank.
+  - The buttons are greyed out, with the reason in their tooltip, when the bank has none of what's missing. Chat tells you what was requested and anything the bank couldn't cover.
+  - Without Guild Bank Toons, or in a guild without a bank, none of this shows. It appears as soon as a bank is set up, without a reload.
+
 ## [1.1.1] - 2026-11-05
 
 ### Added

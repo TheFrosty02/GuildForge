@@ -502,6 +502,139 @@ def test_forever_catalog_cleared():
           cds['Blue Linen Shirt'] is None and cds['Mooncloth'] is not None)
 
 
+GUILD_BANK = r'''
+  -- Guild Bank Toons' API, stubbed: stock per item id, and every Request and callback recorded.
+  BANK={has=true,stock={[2589]=120},calls={},callbacks=0}
+  GuildBankToonsAPI={version=1,
+    HasBank=function() return BANK.has end,
+    Available=function(id) return BANK.stock[id] or 0,{} end,
+    Request=function(items,note,mailTo)
+      local copy={} for k,v in pairs(items) do copy[k]=v end
+      BANK.calls[#BANK.calls+1]={items=copy,note=note,mailTo=mailTo}
+      return {'req'..#BANK.calls},{},nil
+    end,
+    RegisterCallback=function(fn) BANK.callbacks=BANK.callbacks+1; BANK.fire=fn end}
+'''
+BANK_HELPERS = r'''
+  BAGS={[2589]=3}
+  function GetItemCount(id) return BAGS[id] or 0 end
+  WHISPERS={}
+  C_ChatInfo.SendChatMessage=function(m,_,_,to) WHISPERS[#WHISPERS+1]={m=m,to=to} end
+  TIPS={}
+  GameTooltip.AddLine=function(_,text) TIPS[#TIPS+1]=text end
+  function GF_TEST_tab(name)
+    if not (GuildForgeWindow and GuildForgeWindow.__shown) then SlashCmdList.GUILDFORGE('') end
+    for _,f in ipairs(frames) do
+      if f.__kind=='CheckButton' and rawget(f,'name')==name then f.__scripts.OnClick(f) end
+    end
+  end
+  function GF_TEST_expand(recipe)
+    for _,f in ipairs(frames) do
+      local label=rawget(f,'name')
+      if f.__shown and rawget(f,'crafters') and type(label)=='table' and tostring(label.__text):find(recipe,1,true) then f.__scripts.OnClick(f) end
+    end
+  end
+  -- What the window shows: reagent count lines, and buttons by label.
+  function GF_TEST_view()
+    local counts,buttons={},{}
+    for _,f in ipairs(frames) do
+      if f.__shown then
+        local c=rawget(f,'count')
+        if type(c)=='table' then counts[#counts+1]=c.__text end
+        for _,k in ipairs({'b1','b2'}) do
+          local b=rawget(f,k)
+          if b and b.__shown then buttons[b.__text]=b end
+        end
+      end
+    end
+    return table.concat(counts,' / '),buttons
+  end
+'''
+
+
+def bank_player(setup=''):
+    roster = "ROSTER={{'Kota Arkbinky',true},{'Bob Smith',true}}"
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    a = Player('Kota', ['First Aid', 9, 75], ['Linen Bandage'], realm, setup=roster + setup + BANK_HELPERS, surname='Arkbinky')
+    b = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'], realm, setup=roster, surname='Smith')
+    for p in (a, b):
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+    run([a, b])
+    a.fire('GUILD_ROSTER_UPDATE')  # Bob shows as online, so he's the crafter to ask
+    g = a.lua.globals()
+    g.GF_TEST_tab('Tailoring')
+    g.GF_TEST_expand('Bolt of Linen Cloth')
+    return a, g
+
+
+def test_guild_bank_hidden():
+    # No Guild Bank Toons, or no bank in this guild: nothing bank-related shows.
+    for label, setup in [('addon missing', ''), ('HasBank() false', GUILD_BANK + ' BANK.has=false')]:
+        a, g = bank_player(setup)
+        counts, buttons = g.GF_TEST_view()
+        hidden = 'Guild bank' not in counts and 'Get mats from guild bank' not in buttons \
+            and 'Craft order via guild bank' not in buttons and a.lua.eval('GF_NS.bankAPI()') is None
+        check('guild bank: hidden when ' + label, hidden and '3 / 1' in counts and 'Ask Bob Smith' in buttons,
+              '%s | %s' % (counts, list(buttons)))
+    # The bank appearing later (a bank toon added) shows it through the callback, without a reload.
+    g.BANK.has = True
+    g.BANK.fire()
+    a.step()
+    counts, buttons = g.GF_TEST_view()
+    check('guild bank: appears when the bank callback fires', 'Guild bank: 120' in counts
+          and 'Get mats from guild bank' in buttons and g.BANK.callbacks == 1, '%s | %s' % (counts, list(buttons)))
+
+
+def test_guild_bank_requests():
+    a, g = bank_player(GUILD_BANK)
+    counts, buttons = g.GF_TEST_view()
+    check('guild bank: stock shown on reagent lines', 'Guild bank: 120' in counts, counts)
+    # Ten on the shopping list: 10 Linen Cloth needed, 3 in bags, so ask for 7.
+    a.lua.execute("GuildForgeDB.shopping['Tailoring|Bolt of Linen Cloth']=10")
+    g.GF_TEST_tab('Tailoring')
+    _, buttons = g.GF_TEST_view()
+    get = buttons['Get mats from guild bank']
+    get.__scripts.OnClick(get)
+    call = g.BANK.calls[1]
+    check('guild bank: asks for what bags are missing', call is not None and dict(call['items'].items()) == {2589: 7}
+          and call.note == 'for 10× Bolt of Linen Cloth' and call.mailTo is None,
+          call and '%s %r %r' % (dict(call['items'].items()), call.note, call.mailTo))
+    # Craft order: the same mats, mailed to the crafter GuildForge would whisper, who still gets the whisper.
+    _, buttons = g.GF_TEST_view()
+    order = buttons['Craft order via guild bank']
+    order.__scripts.OnClick(order)
+    call, whisper = g.BANK.calls[2], g.WHISPERS[1]
+    check('guild bank: craft order goes to the crafter, who is whispered', call is not None and call.mailTo == 'Bob Smith'
+          and dict(call['items'].items()) == {2589: 7} and whisper is not None and whisper.to == 'Bob Smith'
+          and 'guild bank' in whisper.m, call and '%r %r' % (call.mailTo, whisper and whisper.m))
+    # Shopping List: one button for every missing material.
+    g.GF_TEST_tab('Shopping')
+    _, buttons = g.GF_TEST_view()
+    shop = buttons['Get mats from guild bank']
+    if shop:
+        shop.__scripts.OnClick(shop)
+    call = g.BANK.calls[3]
+    check('guild bank: Shopping List asks for all missing mats', call is not None and dict(call['items'].items()) == {2589: 7}
+          and 'Bolt of Linen Cloth' in call.note, call and '%s %r' % (dict(call['items'].items()), call.note))
+    # The bank has none: greyed out with the reason in its tooltip, and clicking does nothing.
+    a.lua.execute('BANK.stock={}')
+    g.GF_TEST_tab('Shopping')
+    _, buttons = g.GF_TEST_view()
+    shop = buttons['Get mats from guild bank']
+    shop.__scripts.OnEnter(shop)
+    shop.__scripts.OnClick(shop)
+    tips = [g.TIPS[i] for i in range(1, len(g.TIPS) + 1)]
+    check('guild bank: greyed out when the bank has none', not shop.IsEnabled(shop)
+          and 'The guild bank has none of these right now' in tips and g.BANK.calls[4] is None, str(tips))
+    # Your own recipe: no craft order.
+    g.GF_TEST_tab('First Aid')
+    g.GF_TEST_expand('Linen Bandage')
+    _, buttons = g.GF_TEST_view()
+    check('guild bank: no craft order for a recipe you know', 'Get mats from guild bank' in buttons
+          and 'Craft order via guild bank' not in buttons, str(list(buttons)))
+
+
 def test_big_guild():
     names = ['Member%02d' % i for i in range(12)]
     roster = 'ROSTER={' + ','.join("{'%s',true}" % n for n in names) + '}'
@@ -544,5 +677,7 @@ if __name__ == '__main__':
     test_message_log()
     test_discord_bot()
     test_forever_cooldowns()
+    test_guild_bank_hidden()
+    test_guild_bank_requests()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)
