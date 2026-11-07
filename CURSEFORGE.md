@@ -32,14 +32,28 @@ Add the things you want to make and GuildForge totals up every material you need
 
 ![Shopping list with combined materials](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.webp)
 
+## Pull mats from the guild bank
+
+If your guild uses [Guild Bank Toons](https://github.com/kota150/GuildBankToons), GuildForge works with it (without it, none of this shows):
+
+- **Guild bank stock** next to your own counts on every reagent (`Guild bank: 120`).
+- **Get mats from guild bank** asks the bank for whatever your bags are missing, for one recipe or your whole shopping list.
+- **Craft order via guild bank** on a recipe you can't make: the bank mails the mats straight to the crafter, and GuildForge whispers them to make it for you.
+- Requests wait for a bank officer's approval, and the buttons grey out when the bank has none of what you need.
+
+## Your guild's crafters in Discord
+
+An optional Discord bot ([setup on GitHub](https://github.com/TheFrosty02/GuildForge#discord-bot)) keeps a crafting leaderboard pinned in a channel and updates it in place, and adds `/levels`, `/crafts` and `/leaderboard` commands whose answers only the asker sees. One guildmate runs it on their PC; it's not part of the addon download.
+
 ## Also in the box
 
 - **Item tooltips:** hover any item to see which guildmates craft it and which recipes use it.
 - **Cooldowns:** Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild knows who's ready.
-- **Not known in guild:** recipes seen at trainers that nobody has learned yet, with the skill they need. Everyone's trainer visits fill it in.
+- **Not known in guild:** recipes seen at trainers that nobody has learned yet, sorted by the skill they need. Everyone's trainer visits fill it in.
 - **Search everything:** recipes, crafters, professions and reagents ("linen" finds everything that uses Linen Cloth), plus a **Have mats** filter.
 - **Minimap button** with a badge showing how many guildmates are online with GuildForge.
-- **WoW Forever ready:** works with first and last names, and holds its messages while the game blocks addon chat (like combat in instances).
+- **Message log:** Settings → Message log shows everything GuildForge sends and receives, live, with a **Copy** button that gets it ready to paste into Discord or a bug report.
+- **WoW Forever ready:** works with first and last names (and Forever's per-character realms), and holds its messages while the game blocks addon chat (like combat in instances).
 
 ![Settings](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/settings.png)
 
@@ -59,6 +73,8 @@ Get your guildmates to install it too: the more people running GuildForge, the m
 | `/gf settings` | Open the settings |
 | `/gf who` | List guildmates online with GuildForge and their versions |
 | `/gf clear` | Forget received data and download it fresh |
+| `/gf log` | Open the message log |
+| `/gf debug` | Show how names and messages are read, for bug reports |
 
 `/guildforge` and `/gforge` work too.
 
@@ -77,7 +93,7 @@ Your profession skill levels, the recipes you know, your profession cooldowns an
 Yes. Data is kept separately for each guild, so alts in different guilds never mix.
 
 **Something looks wrong.**
-Open Settings and click **Clear my data**. GuildForge forgets what it received and downloads everything fresh, keeping your own professions.
+Open Settings and click **Clear my data**. GuildForge forgets what it received and downloads everything fresh, keeping your own professions. If that doesn't fix it, open the **Message log**, click **Copy** and paste it into a GitHub issue.
 
 ## Feedback
 
