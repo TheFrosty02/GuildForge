@@ -2,6 +2,11 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.1.3] - 2026-11-07
+
+### Changed
+- The number on the GF minimap button is now green, like the online dots in the list, instead of red. It counts guildmates online with GuildForge (you included), and the red looked like unread notifications. Hover the button to see who they are.
+
 ## [1.1.2] - 2026-11-06
 
 ### Added
