@@ -541,7 +541,7 @@ BANK_HELPERS = r'''
       if f.__shown then
         local c=rawget(f,'count')
         if type(c)=='table' then counts[#counts+1]=c.__text end
-        for _,k in ipairs({'b1','b2'}) do
+        for _,k in ipairs({'b1','b2','b3'}) do
           local b=rawget(f,k)
           if b and b.__shown then buttons[b.__text]=b end
         end
@@ -656,6 +656,162 @@ def test_big_guild():
           'complete=%s, refused=%d' % (complete, throttled(players)))
 
 
+NEWS_HELPERS = r"""
+  -- Board and news as plain strings, and the text of the rows the window shows.
+  function GF_TEST_board()
+    local out={}
+    for _,r in ipairs(GF_NS.allRequests()) do out[#out+1]=r.who..'|'..r.name..'|'..r.qty..'|'..(r.takenBy or '')..'|'..(r.note or '') end
+    return table.concat(out,';')
+  end
+  function GF_TEST_news()
+    local out={}
+    for _,e in ipairs(GF_NS.newsList()) do
+      out[#out+1]=e.who..' '..e.kind..' '..(e.prof or '')..' '..tostring(e.value or e.name or '')..(e.first and ' first' or '')..(e.other and (' for '..e.other) or '')
+    end
+    return table.concat(out,';')
+  end
+  function GF_TEST_rows()
+    local out={}
+    for _,f in ipairs(frames) do
+      local text,when=rawget(f,'text'),rawget(f,'when')
+      if f.__shown and type(when)=='table' and type(text)=='table' then out[#out+1]=tostring(text.__text) end
+    end
+    return table.concat(out,' / ')
+  end
+"""
+
+
+def bot_view(player):
+    """The Discord bot's view of a player's saved data."""
+    import importlib.util
+    import tempfile
+    spec = importlib.util.spec_from_file_location('guildforge_discord', os.path.join(HERE, '..', 'companion', 'guildforge_discord.py'))
+    bot = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bot)
+    with tempfile.TemporaryDirectory() as folder:
+        path = os.path.join(folder, 'GuildForge.lua')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(player.lua.globals().GF_TEST_saved())
+        bucket, members = next(iter(bot.merge_members([path]).items()))
+        extras = bot.merge_extras([path])[bucket]
+    # The test clock runs in 2025; the bot's three-day cutoff uses the real one.
+    bot.time.time = lambda: player.lua.globals().CLOCK
+    return bot, bot.GuildData(bucket, members, 0, extras['news'], extras['requests'])
+
+
+def guild_of(names, setup=''):
+    """Forever guildmates (first name, surname, skill, recipes), all logged in and synced."""
+    roster = 'ROSTER={' + ','.join("{'%s %s',true}" % (n[0], n[1]) for n in names) + '}'
+    realm = 'CAMWOW US2 Realm 1 PvE'
+    players = []
+    for first, surname, skill, recipes in names:
+        p = Player(first, skill, recipes, realm, setup=roster + BANK_HELPERS + NEWS_HELPERS + setup, surname=surname)
+        p.fire('PLAYER_LOGIN')
+        p.fire('TRADE_SKILL_SHOW')
+        players.append(p)
+    run(players)
+    for p in players:
+        p.fire('GUILD_ROSTER_UPDATE')
+    return players
+
+
+def test_guild_news():
+    kota, bob = guild_of([('Kota', 'Arkbinky', ['First Aid', 9, 75], ['Linen Bandage']),
+                          ('Bob', 'Smith', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'])])
+    check('news: nothing on first sync (catching up is not news)', kota.lua.globals().GF_TEST_news() == '',
+          kota.lua.globals().GF_TEST_news())
+    # Bob levels to 51 and learns a recipe nobody else has.
+    g = bob.lua.globals()
+    g.SKILL = bob.lua.table('Tailoring', 51, 75)
+    g.TS_RECIPES = bob.lua.table('Bolt of Linen Cloth', 'Brown Linen Shirt')
+    bob.fire('SKILL_LINES_CHANGED')
+    bob.fire('TRADE_SKILL_SHOW')
+    run([kota, bob])
+    seen, own = kota.lua.globals().GF_TEST_news(), g.GF_TEST_news()
+    expected = ['Bob Smith skill Tailoring 50', 'Bob Smith learned Tailoring Brown Linen Shirt first']
+    check('news: a guildmate\'s skill milestone and first-in-guild recipe', all(e in seen for e in expected), seen)
+    check('news: your own milestones too', all(e in own for e in expected), own)
+    # Another few points within hours replace the milestone instead of adding lines.
+    g.SKILL = bob.lua.table('Tailoring', 76, 150)
+    bob.fire('SKILL_LINES_CHANGED')
+    run([kota, bob])
+    seen = kota.lua.globals().GF_TEST_news()
+    check('news: a leveling spree stays one line', seen.count('skill Tailoring') == 1 and 'skill Tailoring 75' in seen, seen)
+    bot, guild = bot_view(kota)
+    lines = [bot.news_line(e) for e in guild.news]
+    check('Discord bot: guild news lines', '📈 **Bob Smith** reached **75** Tailoring' in lines
+          and '📜 **Bob Smith** learned **Brown Linen Shirt** (Tailoring) ⭐ *first in the guild*' in lines, str(lines))
+    k = kota.lua.globals()
+    k.GF_TEST_tab('Home')
+    rows = k.GF_TEST_rows()
+    check('Home tab: guild news and who is online', 'reached' in rows and 'Brown Linen Shirt' in rows
+          and 'first in the guild' in rows and 'Bob Smith' in rows and 'Tailoring' in rows, rows)
+
+
+def test_request_board():
+    kota, bob, cara = guild_of([('Kota', 'Arkbinky', ['First Aid', 9, 75], ['Linen Bandage']),
+                                ('Bob', 'Smith', ['Tailoring', 24, 75], ['Bolt of Linen Cloth']),
+                                ('Cara', 'Lee', ['Cooking', 10, 75], ['Spiced Wolf Meat'])])
+    k, b, c = (p.lua.globals() for p in (kota, bob, cara))
+    # The Request button on a recipe you don't know.
+    k.GF_TEST_tab('Tailoring')
+    k.GF_TEST_expand('Bolt of Linen Cloth')
+    _, buttons = k.GF_TEST_view()
+    check('requests: Request button on a recipe you can\'t make', 'Request' in buttons, str(list(buttons)))
+    kota.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',2,'have the mats')")
+    run([kota, bob, cara])
+    want = 'Kota Arkbinky|Bolt of Linen Cloth|2||have the mats'
+    check('requests: a post reaches the guild', b.GF_TEST_board() == want and c.GF_TEST_board() == want
+          and bob.lua.eval('GF_NS.requestsYouCanMake()') == 1 and cara.lua.eval('GF_NS.requestsYouCanMake()') == 0,
+          '%s | %s' % (b.GF_TEST_board(), c.GF_TEST_board()))
+    # Bob takes it from his Request Board: Kota is whispered and everyone sees it taken.
+    b.GF_TEST_tab('Requests')
+    _, buttons = b.GF_TEST_view()
+    take = buttons["I'll make it"]
+    take.__scripts.OnClick(take)
+    run([kota, bob, cara])
+    whisper = b.WHISPERS[1]
+    taken = 'Kota Arkbinky|Bolt of Linen Cloth|2|Bob Smith|have the mats'
+    check('requests: taking one whispers the poster and shows for everyone', whisper is not None and whisper.to == 'Kota Arkbinky'
+          and k.GF_TEST_board() == taken and c.GF_TEST_board() == taken,
+          '%s | %s | %s' % (whisper and whisper.m, k.GF_TEST_board(), c.GF_TEST_board()))
+    # A guildmate who logs in later catches up from Kota's summary.
+    dave = Player('Dave', ['Mining', 30, 75], [], 'CAMWOW US2 Realm 1 PvE', surname='Jones', setup=(
+        "ROSTER={{'Kota Arkbinky',true},{'Bob Smith',true},{'Cara Lee',true},{'Dave Jones',true}}" + BANK_HELPERS + NEWS_HELPERS))
+    dave.fire('PLAYER_LOGIN')
+    run([kota, bob, cara, dave])
+    d = dave.lua.globals()
+    check('requests: a late login catches up', d.GF_TEST_board() == taken, d.GF_TEST_board())
+    bot, guild = bot_view(dave)
+    msg = bot.build_requests(guild)
+    check('Discord bot: /requests', msg['fields'] and msg['fields'][0][0] == 'Tailoring (1)'
+          and '2× **Bolt of Linen Cloth** for Kota Arkbinky' in msg['fields'][0][1] and 'Bob Smith is on it' in msg['fields'][0][1]
+          and 'have the mats' in msg['fields'][0][1], str(msg))
+    # Kota got it: done, off every board, and Bob gets the credit in guild news.
+    kota.lua.eval("GF_NS.closeRequest(GF_NS.allRequests()[1].id,true)")
+    run([kota, bob, cara, dave])
+    check('requests: done takes it off every board', all(p.lua.globals().GF_TEST_board() == '' for p in (kota, bob, cara, dave)),
+          ' | '.join(p.lua.globals().GF_TEST_board() for p in (kota, bob, cara, dave)))
+    credit = 'Bob Smith filled Tailoring 2 for Kota Arkbinky'
+    check('requests: the crafter is credited in guild news', credit in k.GF_TEST_news() and credit in b.GF_TEST_news(),
+          '%s | %s' % (k.GF_TEST_news(), b.GF_TEST_news()))
+    # Cancelled while Dave was away: his next sync drops it.
+    kota.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',1)")
+    run([kota, bob, cara, dave])
+    kota.lua.eval("GF_NS.closeRequest(GF_NS.allRequests()[1].id,false)")
+    run([kota, bob, cara])
+    stale = d.GF_TEST_board()
+    d.SlashCmdList.GUILDFORGE('sync')
+    run([kota, bob, cara, dave])
+    check('requests: one cancelled while you were away is dropped on sync', stale != '' and d.GF_TEST_board() == '',
+          '%r -> %r' % (stale, d.GF_TEST_board()))
+    # Old requests close themselves after three days.
+    kota.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',1)")
+    run([kota, bob])
+    b.CLOCK = b.CLOCK + 3 * 86400 + 60
+    check('requests: expire after three days', b.GF_TEST_board() == '', b.GF_TEST_board())
+
+
 if __name__ == '__main__':
     test_load('GuildForge')
     test_load('GuildCraft')
@@ -679,5 +835,7 @@ if __name__ == '__main__':
     test_forever_cooldowns()
     test_guild_bank_hidden()
     test_guild_bank_requests()
+    test_guild_news()
+    test_request_board()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

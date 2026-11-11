@@ -55,8 +55,10 @@ local professionIcons={
   Skinning='Interface\\Icons\\INV_Misc_Pelt_Wolf_01',
   All='Interface\\Icons\\INV_Misc_Book_09',
   Shopping='Interface\\Icons\\INV_Misc_Bag_08',
+  Home='Interface\\Icons\\Ability_Warrior_BattleShout',
+  Requests='Interface\\Icons\\INV_Misc_Note_01',
 }
-local specialTabs={All='All Professions',Shopping='Shopping List'}
+local specialTabs={All='All Professions',Shopping='Shopping List',Home='Guild Home',Requests='Request Board'}
 -- WoW: Forever runs on the modern (Midnight-era) API where many Classic globals moved into C_ namespaces.
 -- Resolve each once so the same file runs on Classic Era and Forever.
 local GetItemInfo=GetItemInfo or (C_Item and C_Item.GetItemInfo)
@@ -266,7 +268,9 @@ function GF.initDB()
     end
   end
   GuildForgeDB.cooldownsV2=true
-  selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'All'
+  -- 1.2.0 added the Home tab; open there once, then remember whatever tab was last used.
+  if not GuildForgeDB.homeV1 then GuildForgeDB.ui.tab='Home'; GuildForgeDB.homeV1=true end
+  selectedTab=professionIcons[GuildForgeDB.ui.tab or ''] and GuildForgeDB.ui.tab or 'Home'
 end
 -- A record keeps recipes and cooldowns only for professions it still has (after someone drops one).
 -- Returns whether any recipes, and whether any cooldowns, were removed.
@@ -294,6 +298,7 @@ local function save()
   db[name]={professions=professions,updated=now(),localPlayer=true,recipes=previous.recipes or {},recipeUpdated=previous.recipeUpdated or {},cooldowns=previous.cooldowns or {},cdStamp=previous.cdStamp}
   -- Right after login the skill list can briefly be empty; only prune once the game has reported skills.
   local loaded=#professions>0 or (GetNumSkillLines and GetNumSkillLines()>0)
+  if #professions>0 then GF.skillNews(name,previous.professions,professions) end
   if loaded then
     local _,cooldownsDropped=GF.dropRemovedProfessions(db[name])
     if cooldownsDropped then db[name].cdStamp=now() end
@@ -355,6 +360,7 @@ function GF.parseMessage(message,sender)
   if not senderMatches(sender,who) then return end
   if action=='S' then handleSummary(who,extra); return end
   if action=='A' then handleAsk(extra); return end
+  if action=='Q' or action=='Z' or action=='X' or action=='Y' then GF.receiveRequest(action,who,extra); return end
   if action=='B' then pending[who]={professions={},updated=now(),expected=tonumber(extra)}; return end
   if action=='P' then
     local record=pending[who]
@@ -375,6 +381,7 @@ function GF.parseMessage(message,sender)
       record.cooldowns=old.cooldowns or {}
       -- Forget recipes and cooldowns for professions they no longer have.
       GF.dropRemovedProfessions(record)
+      GF.skillNews(who,old.professions,record.professions)
       db[who]=record
       received=received+1
       requestUpdate()
@@ -542,7 +549,7 @@ end
 function GF.summaryPayload()
   local mine=db and db[key()]
   if not mine then return nil end
-  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'K'..GF.catalogHash()}
+  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'K'..GF.catalogHash(),'q'..GF.requestHash(key())}
   for index,prof in ipairs(professions) do
     local list=mine.recipes and mine.recipes[prof]
     if craftable[prof] and type(list)=='table' and #list>0 then
@@ -579,6 +586,12 @@ handleSummary=function(who,extra)
       -- Catalogs merge as a union: pull theirs when it differs; they pull ours from our own summary.
       -- At most every 10 minutes per guildmate, in case the two lists never quite match.
       if hash and hash>0 and hash~=GF.catalogHash() and not GF.recentlyAsked('K|'..who,600) then wants=wants..'K' end
+    elseif kind=='q' then
+      -- Their open requests: none left means drop ours; otherwise ask for the list when it differs.
+      local hash=tonumber(value)
+      local board=GF.requestBoard()
+      if hash==0 then if board and board[who] then board[who]=nil; requestUpdate() end
+      elseif hash and hash~=GF.requestHash(who) then wants=wants..'q' end
     else
       local index,count,hash=token:match('^(%d+):(%d+):(%d+)$')
       local prof=index and professions[tonumber(index)]
@@ -655,6 +668,7 @@ handleAsk=function(extra)
   if wants:find('p',1,true) then announce(false) end
   if wants:find('c',1,true) and now()-cooldownsAskedAt>=30 then cooldownsAskedAt=now(); queueCooldowns() end
   if wants:find('K',1,true) then for prof in pairs(craftable) do GF.queueCatalog(prof) end end
+  if wants:find('q',1,true) and not GF.recentlyAsked('q-sent',20) then GF.queueMyRequests() end
 end
 
 function GF.applyDetail(prof,entry)
@@ -713,6 +727,7 @@ function GF.receiveRecipe(msg,sender)
       record.recipes=record.recipes or {}
       record.recipeUpdated=record.recipeUpdated or {}
       table.sort(pending.items)
+      GF.recipeNews(who,prof,record.recipes[prof],pending.items)
       record.recipes[prof]=pending.items
       record.recipeUpdated[prof]=now()
       db[who]=record
@@ -772,6 +787,7 @@ local function commitScan(prof,recipes,warnFiltered)
   local changed=not old or #old~=#recipes
   if not changed then for i,name in ipairs(recipes) do if old[i]~=name then changed=true; break end end end
   if changed then
+    GF.recipeNews(key(),prof,old,recipes)
     record.recipes[prof]=recipes
     record.recipeUpdated[prof]=now()
     queueRecipes(prof,true)
@@ -1186,6 +1202,254 @@ end
 function GF.markSeen(who)
   local id=nameId(who)
   if id and not activeSeen[id] then activeSeen[id]=displayName(who); if refreshMinimap then refreshMinimap() end end
+end
+
+
+-- Guild news: skill milestones, newly learned recipes and finished requests, found by comparing what
+-- arrives with what was saved. Kept per guild, newest last, for the Home tab and the Discord bot.
+GF.NEWS_MAX=150
+function GF.guildStore()
+  if not currentGuild or db==tempMembers or not GuildForgeDB then return nil end
+  return GuildForgeDB.guilds[currentGuild]
+end
+function GF.newsList()
+  local store=GF.guildStore()
+  if not store then return {} end
+  store.news=store.news or {}
+  return store.news
+end
+function GF.addNews(entry)
+  local store=GF.guildStore()
+  if not store then return end
+  store.news=store.news or {}
+  local list=store.news
+  entry.t=entry.t or now()
+  for i=#list,math.max(1,#list-40),-1 do
+    local e=list[i]
+    if e.who==entry.who and e.kind==entry.kind and e.prof==entry.prof then
+      -- A skill milestone within 6 hours of the last one replaces it, so a leveling spree is one line.
+      if entry.kind=='skill' then
+        if entry.t-(e.t or 0)<21600 then table.remove(list,i) end
+        break
+      end
+      if entry.name and e.name==entry.name then return end
+    end
+  end
+  list[#list+1]=entry
+  while #list>GF.NEWS_MAX do table.remove(list,1) end
+  requestUpdate()
+end
+-- Every 25 skill points is a milestone; a profession that wasn't there before was taken up.
+-- No news the first time we hear about someone: that's catching up, not something new.
+function GF.skillNews(who,old,new)
+  if type(old)~='table' or #old==0 or type(new)~='table' then return end
+  local before={}
+  for _,p in ipairs(old) do before[p.name]=tonumber(p.rank) or 0 end
+  for _,p in ipairs(new) do
+    local was,rank=before[p.name],tonumber(p.rank) or 0
+    if not was then GF.addNews({who=who,kind='took',prof=p.name,value=rank})
+    elseif rank>=25 and math.floor(rank/25)>math.floor(was/25) then
+      GF.addNews({who=who,kind='skill',prof=p.name,value=math.floor(rank/25)*25})
+    end
+  end
+end
+function GF.othersKnow(who,prof,name)
+  for other,record in pairs(db or {}) do
+    local list=other~=who and record.recipes and record.recipes[prof]
+    if type(list)=='table' then for _,n in ipairs(list) do if n==name then return true end end end
+  end
+  return false
+end
+-- New recipes in a list: each one by name, or a count when there are many (plus any nobody else knows).
+function GF.recipeNews(who,prof,old,new)
+  if type(old)~='table' or #old==0 or type(new)~='table' then return end
+  local had={}
+  for _,n in ipairs(old) do had[n]=true end
+  local fresh={}
+  for _,n in ipairs(new) do if not had[n] then fresh[#fresh+1]=n end end
+  if #fresh==0 then return end
+  if #fresh>3 then GF.addNews({who=who,kind='learnedMany',prof=prof,value=#fresh}) end
+  local firsts=0
+  for _,n in ipairs(fresh) do
+    local first=not GF.othersKnow(who,prof,n)
+    if #fresh<=3 or (first and firsts<3) then
+      if first then firsts=firsts+1 end
+      GF.addNews({who=who,kind='learned',prof=prof,name=n,first=first or nil})
+    end
+  end
+end
+function GF.whoText(who)
+  if who==key() then return '|cff40ff40You|r' end
+  return '|cffffffff'..displayName(who)..'|r'
+end
+function GF.newsText(e)
+  local who=GF.whoText(e.who)
+  if e.kind=='skill' then return who..' reached |cffffd100'..e.value..'|r '..e.prof end
+  if e.kind=='took' then return who..' took up '..e.prof end
+  if e.kind=='learned' then
+    local info=recipeInfo and recipeInfo[e.prof] and recipeInfo[e.prof][e.name]
+    return who..' learned '..GF.recipeLabel(e.name,info)..(e.first and '  |cffff9933first in the guild|r' or '')
+  end
+  if e.kind=='learnedMany' then return who..' learned '..e.value..' '..e.prof..' recipes' end
+  if e.kind=='filled' then
+    return who..' made '..((e.value or 1)>1 and (e.value..'× ') or '')..'|cffffd100'..e.name..'|r for '..GF.whoText(e.other)
+  end
+  return who
+end
+
+-- Request board: guildmates post what they need crafted, a crafter takes it, and the poster marks it done.
+-- The poster's copy is the real one. Q|who|id~prof~name~qty~age~takenBy~note posts or updates a request;
+-- Z|who|ids lists the poster's open ones (others are dropped); Y|crafter|poster~id takes one (~0 gives it
+-- back); X|who|id~d or ~c closes one as done or cancelled. Summaries carry q<hash> so late logins catch up.
+-- Older versions ignore all of these.
+GF.REQUEST_DAYS=3
+GF.REQUEST_MAX=5
+function GF.requestBoard()
+  local store=GF.guildStore()
+  if not store then return nil end
+  store.requests=store.requests or {}
+  return store.requests
+end
+-- One poster's open requests by id, dropping expired ones.
+function GF.requestsOf(who)
+  local board=GF.requestBoard()
+  local posted=board and board[who]
+  local list={}
+  for id,r in pairs(posted or {}) do
+    if now()-(r.t or 0)>GF.REQUEST_DAYS*86400 then posted[id]=nil else r.who=who; list[#list+1]=r end
+  end
+  table.sort(list,function(a,b) return a.id<b.id end)
+  return list
+end
+function GF.requestHash(who)
+  local parts={}
+  for _,r in ipairs(GF.requestsOf(who)) do parts[#parts+1]=r.id..':'..(r.takenBy or '') end
+  return #parts>0 and listHash(parts) or 0
+end
+function GF.requestPayload(r)
+  -- The note goes last, so a long recipe name only shortens the note.
+  return ('Q|'..key()..'|'..r.id..'~'..r.prof..'~'..r.name..'~'..r.qty..'~'..math.max(0,now()-r.t)..'~'..(r.takenBy or '')..'~'..(r.note or '')):sub(1,250)
+end
+function GF.queueMyRequests()
+  local list=GF.requestsOf(key())
+  local ids={}
+  for _,r in ipairs(list) do ids[#ids+1]=r.id end
+  addonSend('Z|'..key()..'|'..table.concat(ids,','))
+  for _,r in ipairs(list) do addonSend(GF.requestPayload(r)) end
+end
+function GF.knowsRecipe(prof,name)
+  local list=db and db[key()] and db[key()].recipes and db[key()].recipes[prof]
+  for _,n in ipairs(type(list)=='table' and list or {}) do if n==name then return true end end
+  return false
+end
+function GF.isOnline(who) return who==key() or guildOnline[nameId(who)]==true end
+function GF.postRequest(prof,name,qty,note)
+  local board=GF.requestBoard()
+  if not board or not craftable[prof] then log('Requests need a guild.',true); return nil end
+  if #GF.requestsOf(key())>=GF.REQUEST_MAX then
+    log('You can have '..GF.REQUEST_MAX..' open requests. Mark one done or cancel it first.',true)
+    return nil
+  end
+  GuildForgeDB.requestSeq=(GuildForgeDB.requestSeq or 0)+1
+  local r={id=GuildForgeDB.requestSeq,prof=prof,name=clean(name),qty=math.max(1,math.min(99,math.floor(tonumber(qty) or 1))),
+    note=clean(note or ''):sub(1,60),t=now()}
+  if r.note=='' then r.note=nil end
+  board[key()]=board[key()] or {}
+  board[key()][r.id]=r
+  addonSend(GF.requestPayload(r))
+  log('Posted '..r.qty..'× '..r.name..' on the request board.',true)
+  requestUpdate()
+  return r
+end
+function GF.closeRequest(id,done)
+  local board=GF.requestBoard()
+  local r=board and board[key()] and board[key()][id]
+  if not r then return end
+  board[key()][id]=nil
+  addonSend('X|'..key()..'|'..id..'~'..(done and 'd' or 'c'))
+  if done and r.takenBy then GF.addNews({who=r.takenBy,kind='filled',prof=r.prof,name=r.name,value=r.qty,other=key()}) end
+  requestUpdate()
+end
+-- Take a request (or give it back). The crafter whispers the poster, who has to be online to take it.
+function GF.takeRequest(r,giveBack)
+  if giveBack then
+    if r.takenBy==key() then r.takenBy=nil end
+  else
+    if r.takenBy or not GF.isOnline(r.who) then return end
+    r.takenBy=key()
+    if SendChat then
+      SendChat('[GuildForge] I can make '..r.qty..'× '..r.name..' for you (from the request board).','WHISPER',nil,displayName(r.who))
+    end
+  end
+  addonSend('Y|'..key()..'|'..r.who..'~'..r.id..(giveBack and '~0' or ''))
+  requestUpdate()
+end
+function GF.receiveRequest(action,who,extra)
+  local board=GF.requestBoard()
+  if not board then return end
+  extra=extra or ''
+  if action=='Q' then
+    local id,prof,name,qty,age,taken,note=extra:match('^(%d+)~([^~]*)~([^~]+)~(%d+)~(%d+)~([^~]*)~?(.*)$')
+    if not id or not craftable[prof] or tonumber(age)>GF.REQUEST_DAYS*86400 then return end
+    id=tonumber(id)
+    board[who]=board[who] or {}
+    local isNew=not board[who][id]
+    local r={id=id,prof=prof,name=clean(name),qty=math.max(1,tonumber(qty) or 1),t=now()-tonumber(age),
+      takenBy=taken~='' and taken or nil,note=note~='' and clean(note):sub(1,60) or nil}
+    board[who][id]=r
+    -- Only fresh posts are announced, not the ones caught up on at login.
+    if isNew and tonumber(age)<600 and not r.takenBy and GF.knowsRecipe(prof,r.name) then
+      log(displayName(who)..' needs '..r.qty..'× '..r.name..', which you can make. See Requests in GuildForge.')
+    end
+  elseif action=='Z' then
+    local keep={}
+    for id in extra:gmatch('%d+') do keep[tonumber(id)]=true end
+    for id in pairs(board[who] or {}) do if not keep[id] then board[who][id]=nil end end
+  elseif action=='X' then
+    local id,how=extra:match('^(%d+)~?(%a?)$')
+    local list=board[who]
+    local r=list and id and list[tonumber(id)]
+    if not r then return end
+    list[r.id]=nil
+    if how=='d' and r.takenBy then GF.addNews({who=r.takenBy,kind='filled',prof=r.prof,name=r.name,value=r.qty,other=who}) end
+  elseif action=='Y' then
+    local poster,id,back=extra:match('^(.-)~(%d+)~?(%d?)$')
+    local list=poster and board[poster]
+    local r=list and list[tonumber(id)]
+    if not r then return end
+    if back=='0' then
+      if r.takenBy==who then r.takenBy=nil end
+    elseif not r.takenBy then
+      r.takenBy=who
+      if poster==key() then log(displayName(who)..' will make your '..r.name..'.',true) end
+    end
+    -- The poster settles who has it when two crafters answer at once.
+    if poster==key() then addonSend(GF.requestPayload(r)) end
+  end
+  requestUpdate()
+end
+-- Everyone's open requests (current guild members only), oldest first, filtered by a search term.
+function GF.allRequests(term)
+  local board=GF.requestBoard()
+  local members=currentMembers()
+  local list={}
+  for who in pairs(board or {}) do
+    if who==key() or members[who] or not GF.rosterComplete() then
+      for _,r in ipairs(GF.requestsOf(who)) do
+        local text=(r.name..' '..r.prof..' '..displayName(who)..' '..(r.note or '')):lower()
+        if not term or term=='' or text:find(term,1,true) then list[#list+1]=r end
+      end
+    end
+  end
+  table.sort(list,function(a,b) return a.t<b.t end)
+  return list
+end
+function GF.requestsYouCanMake()
+  local n=0
+  for _,r in ipairs(GF.allRequests()) do
+    if r.who~=key() and not r.takenBy and GF.knowsRecipe(r.prof,r.name) then n=n+1 end
+  end
+  return n
 end
 
 -- Display helpers
@@ -1751,7 +2015,8 @@ factories.actions=function()
   f:SetHeight(26)
   f.b1=smallButton(f,'',140); f.b1:SetPoint('LEFT',0,0)
   f.b2=smallButton(f,'',110); f.b2:SetPoint('LEFT',f.b1,'RIGHT',6,0)
-  f.text=fontString(f,'GameFontDisableSmall'); f.text:SetPoint('LEFT',f.b2,'RIGHT',10,0)
+  f.b3=smallButton(f,'',110); f.b3:SetPoint('LEFT',f.b2,'RIGHT',6,0)
+  f.text=fontString(f,'GameFontDisableSmall'); f.text:SetPoint('LEFT',f.b3,'RIGHT',10,0)
   return f
 end
 -- Guild bank buttons, a row of their own so the existing actions keep their place when there's no bank.
@@ -1817,6 +2082,29 @@ factories.note=function()
   f.text:SetPoint('TOPLEFT',0,-2); f.text:SetJustifyH('LEFT'); f.text:SetJustifyV('TOP')
   return f
 end
+factories.news=function()
+  local b=CreateFrame('Button',nil,scrollContent)
+  b:SetHeight(20)
+  b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
+  b.icon=b:CreateTexture(nil,'ARTWORK'); b.icon:SetSize(16,16); b.icon:SetPoint('LEFT',6,0); b.icon:SetTexCoord(.07,.93,.07,.93)
+  b.text=fontString(b,'GameFontHighlight'); b.text:SetPoint('LEFT',b.icon,'RIGHT',6,0); b.text:SetWidth(500)
+  b.when=fontString(b,'GameFontDisableSmall','RIGHT'); b.when:SetPoint('RIGHT',-8,0); b.when:SetWidth(80)
+  addHighlight(b,.25)
+  return b
+end
+factories.request=function()
+  local b=CreateFrame('Button',nil,scrollContent)
+  b:SetHeight(26)
+  b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
+  b.dot=b:CreateTexture(nil,'ARTWORK'); b.dot:SetTexture(DOT_TEXTURE); b.dot:SetSize(9,9); b.dot:SetPoint('LEFT',6,0)
+  GF.iconSlot(b,22); b.iconBorder:SetPoint('LEFT',20,0)
+  b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.iconBorder,'RIGHT',8,0); b.name:SetWidth(210)
+  b.info=fontString(b,'GameFontHighlightSmall'); b.info:SetPoint('LEFT',270,0); b.info:SetWidth(190)
+  b.b1=smallButton(b,'',96); b.b1:SetPoint('RIGHT',-4,0)
+  b.b2=smallButton(b,'',76); b.b2:SetPoint('RIGHT',b.b1,'LEFT',-4,0)
+  addHighlight(b)
+  return b
+end
 local pools={}
 local function acquire(kind)
   local pool=pools[kind]
@@ -1848,6 +2136,176 @@ function GF.showCrafterTooltip(owner,prof,c)
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('Click to show only their recipes',.4,.8,1)
   GameTooltip:Show()
+end
+
+-- A request on the board, with the buttons that fit who's looking: the poster marks it done or cancels it,
+-- a guildmate who knows the recipe takes it, and whoever took it can whisper or give it back.
+function GF.setRowButton(b,label,enabled,tip,onClick)
+  b:SetText(label); b:Show()
+  if enabled then b:Enable() else b:Disable() end
+  if b.SetMotionScriptsWhileDisabled then b:SetMotionScriptsWhileDisabled(true) end
+  b:SetScript('OnClick',function() releaseSearchFocus(); if enabled then onClick(); update() end end)
+  b:SetScript('OnEnter',function(self)
+    GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine(label,1,.82,0); GameTooltip:AddLine(tip,.85,.85,.85,true); GameTooltip:Show()
+  end)
+  b:SetScript('OnLeave',GameTooltip_Hide)
+end
+function GF.addRequestRow(ctx,r)
+  local b=acquire('request')
+  ctx.nextStripe(b.stripe,.045)
+  local mine=r.who==key()
+  local online=GF.isOnline(r.who)
+  GF.setDot(b.dot,online)
+  local info=recipeInfo[r.prof] and recipeInfo[r.prof][r.name]
+  b.icon:SetTexture(GF.recipeIcon(r.prof,info))
+  b.name:SetText((r.qty>1 and ('|cffffffff'..r.qty..'×|r ') or '')..GF.recipeLabel(r.name,info))
+  local state=''
+  if r.takenBy then state='  ·  |cff8fb8ff'..(r.takenBy==key() and 'you are making it' or (displayName(r.takenBy)..' is on it'))..'|r' end
+  b.info:SetText('|cffa0a0a0'..(mine and 'You' or displayName(r.who))..'  ·  '..GF.agoText(now()-r.t)..'|r'..state)
+  b.b2:Hide()
+  if mine then
+    GF.setRowButton(b.b1,'Done',true,'You got it: take it off the board'..(r.takenBy and (' and credit '..displayName(r.takenBy)..' in guild news') or '')..'.',
+      function() GF.closeRequest(r.id,true) end)
+    GF.setRowButton(b.b2,'Cancel',true,'Take it off the board without it being made.',function() GF.closeRequest(r.id,false) end)
+  elseif r.takenBy==key() then
+    GF.setRowButton(b.b1,'Whisper',online and ChatFrame_SendTell~=nil,online and 'Start a whisper to '..displayName(r.who)..'.' or displayName(r.who)..' is offline.',
+      function() ChatFrame_SendTell(displayName(r.who)) end)
+    GF.setRowButton(b.b2,'Give back',true,'Let someone else take it.',function() GF.takeRequest(r,true) end)
+  elseif r.takenBy then
+    GF.setRowButton(b.b1,'Taken',false,displayName(r.takenBy)..' is making this.',nil)
+  else
+    local knows=GF.knowsRecipe(r.prof,r.name)
+    local why=not knows and "You don't know this recipe." or (not online and displayName(r.who)..' is offline; take it when they are on.')
+    GF.setRowButton(b.b1,"I'll make it",not why,why or ('Tell '..displayName(r.who).." you'll make it (whispers them) and mark it taken for the guild."),
+      function() GF.takeRequest(r) end)
+  end
+  b:SetScript('OnEnter',function(self)
+    if not GF.showLinkTooltip(self,info and info.link) then GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine(r.name,1,.82,0) end
+    GameTooltip:AddLine(' ')
+    GameTooltip:AddLine((mine and 'You' or displayName(r.who))..' asked for '..r.qty..' ('..r.prof..'), '..GF.agoText(now()-r.t),1,1,1)
+    if r.note then GameTooltip:AddLine('"'..r.note..'"',.9,.85,.6,true) end
+    GameTooltip:AddLine('Requests close after '..GF.REQUEST_DAYS..' days.',.6,.6,.6)
+    GameTooltip:Show()
+  end)
+  b:SetScript('OnLeave',GameTooltip_Hide)
+  b:SetScript('OnClick',function()
+    releaseSearchFocus()
+    if IsModifiedClick and IsModifiedClick('CHATLINK') then insertChatLink(info and info.link) end
+  end)
+  ctx.place(b,26,8)
+end
+function GF.drawRequests(ctx)
+  local canMake,making,mine,rest={},{},{},{}
+  for _,r in ipairs(GF.allRequests(ctx.term)) do
+    if r.who==key() then mine[#mine+1]=r
+    elseif r.takenBy==key() then making[#making+1]=r
+    elseif not r.takenBy and GF.knowsRecipe(r.prof,r.name) then canMake[#canMake+1]=r
+    else rest[#rest+1]=r end
+  end
+  local function group(id,label,list,empty)
+    if #list==0 and not empty then return end
+    if ctx.addSection(id,label,#list>0 and tostring(#list) or '') then
+      if #list==0 then ctx.addNote(empty,16) end
+      for _,r in ipairs(list) do GF.addRequestRow(ctx,r) end
+    end
+  end
+  group('req|can','You can make',canMake)
+  group('req|making',"You're making",making)
+  group('req|mine','Your requests',mine,'Expand any recipe and click |cffffd100Request|r to ask the guild for it. Guildmates who can make it see it here and in chat.')
+  group('req|rest','Other requests',rest)
+  headerIcon:SetTexture(professionIcons.Requests)
+  headerTitle:SetText('Request Board')
+  headerSub:SetText((#canMake+#making+#mine+#rest)..' open  ·  |cff40ff40'..#canMake..' you can make|r  ·  requests close after '..GF.REQUEST_DAYS..' days')
+end
+-- Guildmates online with GuildForge, you first, with their professions.
+function GF.onlineMembers()
+  local list={}
+  local rosterKnown=next(guildOnline)~=nil
+  for who,record in pairs(currentMembers()) do
+    local id=nameId(who)
+    local isMe=who==key()
+    if isMe or (activeSeen[id] and (not rosterKnown or guildOnline[id])) then
+      list[#list+1]={who=who,record=record,isMe=isMe,name=isMe and (playerName() or who) or displayName(who)}
+    end
+  end
+  table.sort(list,function(a,b) if a.isMe~=b.isMe then return a.isMe end return a.name<b.name end)
+  return list
+end
+function GF.addLinkCard(ctx,tab,label,info)
+  local h=acquire('profHeader')
+  h.icon:SetTexture(professionIcons[tab]); h.icon:SetDesaturated(false)
+  h.name:SetText(label); h.info:SetText(info)
+  h:SetScript('OnClick',function() releaseSearchFocus(); selectTab(tab) end)
+  ctx.place(h,42)
+  return h
+end
+function GF.drawHome(ctx)
+  local requests=GF.allRequests()
+  local canMake,open,mineOpen={},0,0
+  for _,r in ipairs(requests) do
+    open=open+1
+    if r.who==key() then mineOpen=mineOpen+1
+    elseif not r.takenBy and GF.knowsRecipe(r.prof,r.name) then canMake[#canMake+1]=r end
+  end
+  local entries=shoppingEntries()
+  local _,order=GF.shoppingNeeds()
+  local missing=0
+  for _,n in ipairs(order) do if bagCount(n.reagent)<n.need then missing=missing+1 end end
+  GF.addLinkCard(ctx,'Requests','Request Board',open..' open'..(#canMake>0 and ('  |cffa0a0a0·|r  |cff40ff40'..#canMake..' you can make|r') or '')..
+    (mineOpen>0 and ('  |cffa0a0a0·|r  '..mineOpen..' yours') or ''))
+  GF.addLinkCard(ctx,'Shopping','Shopping List',#entries==0 and '|cffa0a0a0empty|r' or
+    (#entries..' recipes  |cffa0a0a0·|r  '..(missing>0 and ('|cffff5a5a'..missing..' materials still needed|r') or '|cff40ff40all gathered|r')))
+  if #canMake>0 and ctx.addSection('home|canmake','Requests you can make',tostring(#canMake)) then
+    for i=1,math.min(5,#canMake) do GF.addRequestRow(ctx,canMake[i]) end
+    if #canMake>5 then ctx.addNote('|cffa0a0a0and '..(#canMake-5)..' more on the Request Board|r',16) end
+  end
+  local online=GF.onlineMembers()
+  if ctx.addSection('home|online','Online with GuildForge',tostring(#online)) then
+    for _,m in ipairs(online) do
+      local b=acquire('news')
+      ctx.nextStripe(b.stripe)
+      local profs,first={},nil
+      for _,p in ipairs(m.record.professions or {}) do
+        first=first or p.name
+        profs[#profs+1]=p.name..' |cffffd100'..p.rank..'|r'
+      end
+      b.icon:SetTexture(professionIcons[first or ''] or QUESTION_ICON)
+      b.text:SetText((m.isMe and '|cff40ff40' or '|cffffffff')..m.name..'|r'..(#profs>0 and ('   |cffa0a0a0'..table.concat(profs,'  ·  ')..'|r') or ''))
+      b.when:SetText(m.isMe and '|cff40ff40You|r' or '')
+      b:SetScript('OnEnter',nil); b:SetScript('OnLeave',nil); b:SetScript('OnClick',nil)
+      ctx.place(b,20,8)
+    end
+  end
+  local cds,ready={},0
+  for _,cd in ipairs((GF.gatherCooldowns(nil,''))) do if cd.ready then ready=ready+1; cds[#cds+1]=cd end end
+  if ready>0 and ctx.addSection('home|cooldowns','Cooldowns ready',tostring(ready)) then
+    for _,cd in ipairs(cds) do ctx.addCooldown(cd) end
+  end
+  local news=GF.newsList()
+  if ctx.addSection('home|news','Guild news',#news>0 and tostring(#news) or '') then
+    if #news==0 then
+      ctx.addNote('Skill milestones, newly learned recipes and finished requests show up here as guildmates share them.',16)
+    end
+    for i=#news,math.max(1,#news-29),-1 do
+      local e=news[i]
+      local b=acquire('news')
+      ctx.nextStripe(b.stripe)
+      b.icon:SetTexture(professionIcons[e.prof or ''] or QUESTION_ICON)
+      b.text:SetText(GF.newsText(e))
+      b.when:SetText(GF.agoText(math.max(0,now()-(e.t or 0))))
+      local info=e.name and recipeInfo[e.prof or ''] and recipeInfo[e.prof][e.name]
+      b:SetScript('OnEnter',function(self) if GF.showLinkTooltip(self,info and info.link) then GameTooltip:Show() end end)
+      b:SetScript('OnLeave',GameTooltip_Hide)
+      b:SetScript('OnClick',function()
+        if IsModifiedClick and IsModifiedClick('CHATLINK') then insertChatLink(info and info.link) end
+      end)
+      ctx.place(b,20,8)
+    end
+  end
+  local guild=(IsInGuild and IsInGuild()) and GetGuildInfo and GetGuildInfo('player')
+  headerIcon:SetTexture(professionIcons.Home)
+  headerTitle:SetText(type(guild)=='string' and not isSecret(guild) and guild or 'Guild Home')
+  headerSub:SetText(#online..' online with GuildForge  ·  '..open..' open requests  ·  '..ready..' cooldowns ready')
 end
 
 update=function()
@@ -2063,6 +2521,17 @@ update=function()
     a.b2:SetText('Add to list'); a.b2:Enable(); a.b2:Show()
     a.b2:SetScript('OnClick',function() releaseSearchFocus(); changeShopping(prof,r.name,1); update() end)
     local onList=GuildForgeDB.shopping[GF.shoppingKey(prof,r.name)]
+    if r.mine or not craftable[prof] then a.b3:Hide()
+    else
+      a.b3:SetText('Request'); a.b3:Enable(); a.b3:Show()
+      a.b3:SetScript('OnClick',function() releaseSearchFocus(); GF.askRequest(prof,r.name,onList or 1) end)
+      a.b3:SetScript('OnEnter',function(self)
+        GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine('Post to the request board',1,.82,0)
+        GameTooltip:AddLine('Guildmates who can make it see it on their Request Board and in chat, even when nobody is online right now.',.85,.85,.85,true)
+        GameTooltip:Show()
+      end)
+      a.b3:SetScript('OnLeave',GameTooltip_Hide)
+    end
     a.text:SetText(onList and ('On your shopping list: '..onList) or '')
     place(a,28,56)
     -- Guild bank: ask for what your bags are missing, for as many as are on your shopping list (or one),
@@ -2084,8 +2553,13 @@ update=function()
     y=y+4
   end
 
+  local ctx={place=place,addNote=addNote,addSection=addSection,nextStripe=nextStripe,addCooldown=addCooldown,term=term}
   local selected=selectedTab
-  if selected=='All' then
+  -- Searching from Home searches everything, like the All tab.
+  if selected=='Home' and searching then selected='All' end
+  if selected=='Home' then GF.drawHome(ctx)
+  elseif selected=='Requests' then GF.drawRequests(ctx)
+  elseif selected=='All' then
     local totalCrafters,totalRecipes=0,0
     addCooldownSection('all|cooldowns',nil)
     local any=false
@@ -2191,7 +2665,7 @@ update=function()
       local a=acquire('actions')
       a.b1:SetText('Clear list'); a.b1:Enable()
       a.b1:SetScript('OnClick',function() releaseSearchFocus(); wipe(GuildForgeDB.shopping); requestUpdate(); update() end)
-      a.b2:Hide()
+      a.b2:Hide(); a.b3:Hide()
       a.text:SetText('Item tooltips also show what you still need.')
       place(a,28,8)
     end
@@ -2252,7 +2726,7 @@ local function makeTab(index,name)
   local t=CreateFrame('CheckButton',nil,window)
   t.name=name
   t:SetSize(32,32)
-  t:SetPoint('TOPLEFT',window,'TOPRIGHT',-6,-44-(index-1)*35)
+  t:SetPoint('TOPLEFT',window,'TOPRIGHT',-6,-40-(index-1)*32)
   local bg=t:CreateTexture(nil,'BACKGROUND')
   bg:SetTexture('Interface\\SpellBook\\SpellBook-SkillLineTab'); bg:SetSize(64,64); bg:SetPoint('TOPLEFT',-3,11)
   t:SetNormalTexture(professionIcons[name])
@@ -2263,6 +2737,10 @@ local function makeTab(index,name)
   t:SetScript('OnEnter',function(self)
     GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
     GameTooltip:AddLine(specialTabs[name] or name,1,.82,0)
+    if name=='Requests' then
+      local n=GF.requestsYouCanMake()
+      GameTooltip:AddLine(n>0 and (n..' you can make') or 'What guildmates need crafted',.85,.85,.85)
+    end
     if not specialTabs[name] and not GF.hasProfession(name) then GameTooltip:AddLine('No guildmates recorded yet',.6,.6,.6) end
     GameTooltip:Show()
   end)
@@ -2494,9 +2972,11 @@ local function makeWindow()
   local hint=f:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); hint:SetPoint('BOTTOMRIGHT',-22,17)
   hint:SetText('Shift-click a recipe or reagent to link it')
 
-  makeTab(1,'All')
-  for i,prof in ipairs(professions) do makeTab(i+1,prof) end
-  makeTab(#professions+2,'Shopping')
+  makeTab(1,'Home')
+  makeTab(2,'All')
+  for i,prof in ipairs(professions) do makeTab(i+2,prof) end
+  makeTab(#professions+3,'Shopping')
+  makeTab(#professions+4,'Requests')
 
   f:SetScript('OnMouseDown',releaseSearchFocus)
   f:SetScript('OnHide',releaseSearchFocus)
@@ -2568,6 +3048,8 @@ local function showMinimapTooltip(self)
   if #users>15 then GameTooltip:AddLine('   and '..(#users-15)..' more',.6,.6,.6) end
   local _,ready=GF.gatherCooldowns(nil,'')
   if ready>0 then GameTooltip:AddLine(ready..' profession cooldown'..(ready==1 and '' or 's')..' ready',.4,1,.4) end
+  local canMake=GF.requestsYouCanMake()
+  if canMake>0 then GameTooltip:AddLine(canMake..' request'..(canMake==1 and '' or 's')..' you can make',.4,1,.4) end
   GameTooltip:AddLine(' ')
   GameTooltip:AddLine('|cffffd100Left-click|r  open GuildForge',.85,.85,.85)
   GameTooltip:AddLine('|cffffd100Right-click|r  sync with guild',.85,.85,.85)
@@ -2633,6 +3115,10 @@ SlashCmdList['GUILDFORGE']=function(message)
     log(string.format('sharing as %s (%s)',key(),GF.forever and 'WoW Forever' or 'Classic'),true)
   elseif message=='debug' then GF.debugReport()
   elseif message=='log' then GF.openLog()
+  elseif message=='requests' or message=='home' then
+    if not window then makeWindow() end
+    if not window:IsShown() then save(); window:Show() end
+    selectTab(message=='home' and 'Home' or 'Requests')
   elseif message=='scan' then GF.scanReport()
   elseif message=='clear' then StaticPopup_Show('GUILDFORGE_CLEAR')
   elseif message=='who' then
@@ -2648,7 +3134,7 @@ SlashCmdList['GUILDFORGE']=function(message)
     if minimapButton then minimapButton:SetShown(not GuildForgeDB.minimap.hide) end
     log('Minimap button '..(GuildForgeDB.minimap.hide and 'hidden' or 'shown')..'.',true)
   elseif message=='help' then
-    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters; debug shows how names and messages are read; log opens the live message log.',true)
+    log('/guildforge opens the window; sync asks the guild for changes; push re-shares all your recipes; settings opens options; home and requests open those tabs; clear forgets received data and re-downloads it; minimap toggles the button; who lists guildmates and their versions; status shows counters; debug shows how names and messages are read; log opens the live message log.',true)
   else toggle() end
 end
 -- Each client lacks some of these events, and registering an unknown one throws.
@@ -2674,6 +3160,8 @@ clearMyData=function()
     if mine then db[me]=mine end
   end
   wipe(tempMembers); wipe(recipePending); wipe(pullRequestedAt); wipe(selectedCrafter); wipe(cdStampSeen)
+  local board=GF.requestBoard()
+  for who in pairs(board or {}) do if who~=key() then board[who]=nil end end
   GuildForgeDB.members=nil
   for _,list in pairs(recipeInfo or {}) do
     for name,info in pairs(list) do
@@ -2683,6 +3171,28 @@ clearMyData=function()
   log('Cleared your GuildForge data. Downloading fresh data from the guild...',true)
   doSync()
 end
+-- Post a request: the note is optional and goes to everyone with the request.
+function GF.askRequest(prof,name,qty)
+  StaticPopup_Show('GUILDFORGE_REQUEST',qty..'× '..name,nil,{prof=prof,name=name,qty=qty})
+end
+function GF.popupBox(popup) return popup.editBox or popup.EditBox end
+StaticPopupDialogs['GUILDFORGE_REQUEST']={
+  text='Post %s on the guild request board?\n\nGuildmates who can make it will see it. Add a note if you like (mats, tip, when):',
+  button1='Post', button2=CANCEL or 'Cancel', hasEditBox=true, maxLetters=60,
+  OnShow=function(self) local box=GF.popupBox(self); if box then box:SetText(''); box:SetFocus() end end,
+  OnAccept=function(self,data)
+    local box=GF.popupBox(self)
+    if data and GF.postRequest(data.prof,data.name,data.qty,box and box:GetText()) then selectTab('Requests') end
+  end,
+  EditBoxOnEnterPressed=function(self)
+    local popup=self:GetParent()
+    local data=popup and popup.data
+    if data and GF.postRequest(data.prof,data.name,data.qty,self:GetText()) then selectTab('Requests') end
+    if popup then popup:Hide() end
+  end,
+  EditBoxOnEscapePressed=function(self) local popup=self:GetParent(); if popup then popup:Hide() end end,
+  timeout=0, whileDead=true, hideOnEscape=true,
+}
 StaticPopupDialogs['GUILDFORGE_CLEAR']={
   text='Clear your GuildForge data?\n\nEverything received from guildmates is removed and downloaded again. Your own professions and recipes are kept.',
   button1=YES, button2=NO,

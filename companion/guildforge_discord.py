@@ -9,6 +9,9 @@ bot for the guild:
   * /levels [character]          profession levels: one character, or the whole guild
   * /crafts character [profession] [search]   what a character can craft
   * /leaderboard [profession]    the leaderboard, or one profession's full ranking
+  * /requests [profession]       what guildmates have asked to have crafted (GuildForge's request board)
+  * Guild news in a channel (optional): skill milestones, newly learned recipes and finished requests,
+    posted as GuildForge records them.
 
 Command answers are only visible to the person who asked (or sent by DM, see reply_in_dm) and are
 deleted after delete_after seconds. Nothing is posted in the channel for anyone else.
@@ -33,6 +36,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "guildforge_discord.json")
@@ -50,6 +54,7 @@ PROFESSIONS = ["Alchemy", "Blacksmithing", "Enchanting", "Engineering", "Leather
 DESCRIPTION_LIMIT = 3900
 FIELD_LIMIT = 1000
 MEDALS = ["🥇", "🥈", "🥉"]
+REQUEST_DAYS = 3
 
 
 # --- SavedVariables (Lua) parser (same as the Guild Bank Toons companion) -------------------------
@@ -257,6 +262,28 @@ def merge_members(files):
     return guilds
 
 
+def merge_extras(files):
+    """{guild bucket: {"news": [entries, oldest first], "requests": [open requests]}} across every file."""
+    out = {}
+    for path in files:
+        db = load_saved_variables(path).get("GuildForgeDB") or {}
+        for bucket, guild in (db.get("guilds") or {}).items():
+            if not isinstance(guild, dict) or bucket.startswith("No guild"):
+                continue
+            extra = out.setdefault(bucket, {"news": {}, "requests": {}})
+            for e in seq(guild.get("news")):
+                if isinstance(e, dict) and e.get("who") and e.get("kind"):
+                    extra["news"][(e.get("t"), e["who"], e["kind"], e.get("prof"), e.get("name"))] = e
+            for who, posted in (guild.get("requests") or {}).items():
+                for r in (posted.values() if isinstance(posted, dict) else []):
+                    if isinstance(r, dict) and r.get("name"):
+                        r = dict(r, who=who)
+                        extra["requests"][(who, r.get("id"))] = r
+    return {bucket: {"news": sorted(x["news"].values(), key=lambda e: e.get("t") or 0),
+                     "requests": sorted(x["requests"].values(), key=lambda r: r.get("t") or 0)}
+            for bucket, x in out.items()}
+
+
 def pick_guild(guilds, wanted=""):
     """The guild named in the settings, else the one with the most members."""
     if wanted:
@@ -272,9 +299,13 @@ def pick_guild(guilds, wanted=""):
 class GuildData:
     """One guild's members, as the bot shows them."""
 
-    def __init__(self, bucket, members, saved_at):
+    def __init__(self, bucket, members, saved_at, news=None, requests=None):
         self.name = guild_label(bucket)
         self.saved_at = saved_at
+        self.news = list(news or [])
+        # Requests close after three days, in the game and here.
+        cutoff = time.time() - REQUEST_DAYS * 86400
+        self.requests = [r for r in (requests or []) if (r.get("t") or 0) > cutoff]
         self.members = []
         for who, record in members.items():
             professions = []
@@ -329,7 +360,9 @@ def load_guild(settings):
     if bucket is None:
         names = ", ".join(sorted({guild_label(b) for b in guilds})) or "none"
         raise DataError(f"Guild not found in the saved data. Guilds found: {names}")
-    return GuildData(bucket, guilds[bucket], max(os.path.getmtime(f) for f in files))
+    extras = merge_extras(files).get(bucket, {})
+    return GuildData(bucket, guilds[bucket], max(os.path.getmtime(f) for f in files),
+                     extras.get("news"), extras.get("requests"))
 
 
 # --- Messages ---------------------------------------------------------------------------------------
@@ -427,6 +460,55 @@ def build_crafts(guild, character, profession=None, search=None):
             "footer": updated_note(m)}
 
 
+def news_line(e):
+    """One guild news entry as a Discord line."""
+    who, prof = f"**{short(e.get('who'))}**", e.get("prof") or ""
+    kind = e.get("kind")
+    if kind == "skill":
+        return f"📈 {who} reached **{e.get('value')}** {prof}"
+    if kind == "took":
+        return f"🆕 {who} took up {prof}"
+    if kind == "learned":
+        first = " ⭐ *first in the guild*" if e.get("first") else ""
+        return f"📜 {who} learned **{e.get('name')}** ({prof}){first}"
+    if kind == "learnedMany":
+        return f"📜 {who} learned {e.get('value')} {prof} recipes"
+    if kind == "filled":
+        qty = int(e.get("value") or 1)
+        return f"🤝 {who} made {f'{qty}× ' if qty > 1 else ''}**{e.get('name')}** for **{short(e.get('other'))}**"
+    return f"{who} {kind}"
+
+
+def build_news(guild, limit=15):
+    lines = [f"{news_line(e)} · <t:{int(e.get('t') or 0)}:R>" for e in reversed(guild.news[-limit:])]
+    return {"title": f"📰 {guild.name} guild news", "description": fit(lines, DESCRIPTION_LIMIT) or "No news yet.",
+            "fields": [], "footer": "Skill milestones, new recipes and finished requests."}
+
+
+def build_requests(guild, profession=None):
+    fields = {}
+    for r in guild.requests:
+        prof = r.get("prof") or "Other"
+        if profession and prof.lower() != profession.lower():
+            continue
+        qty = int(r.get("qty") or 1)
+        line = f"• {f'{qty}× ' if qty > 1 else ''}**{r.get('name')}** for {short(r.get('who'))} · <t:{int(r.get('t') or 0)}:R>"
+        if r.get("takenBy"):
+            line += f" · {short(r['takenBy'])} is on it"
+        if r.get("note"):
+            line += f"\n  *\"{r['note']}\"*"
+        fields.setdefault(prof, []).append(line)
+    total = sum(len(v) for v in fields.values())
+    if not total:
+        where = f" for {profession}" if profession else ""
+        return {"title": "Request board", "description": f"No open requests{where}. Post one in game: expand a recipe "
+                "in GuildForge and click Request.", "fields": [], "footer": ""}
+    return {"title": f"📋 {guild.name} request board",
+            "description": f"{total} open request{'s' if total != 1 else ''}. Take one in game on GuildForge's Requests tab.",
+            "fields": [(f"{prof} ({len(lines)})", fit(lines, FIELD_LIMIT), False) for prof, lines in sorted(fields.items())][:25],
+            "footer": "Requests close after 3 days."}
+
+
 def not_found(guild, character):
     close = [m["name"] for m in guild.members if name_id(character)[:3] in m["id"]][:8]
     hint = f" Did you mean: {', '.join(close)}?" if close else ""
@@ -475,6 +557,7 @@ def run_bot(settings):
         raise SystemExit("Set token in guildforge_discord.json or the GUILDFORGE_BOT_TOKEN environment variable.")
     server_id = int(settings["server_id"]) if settings.get("server_id") else None
     channel_id = int(settings["leaderboard_channel_id"]) if settings.get("leaderboard_channel_id") else None
+    news_channel_id = int(settings["news_channel_id"]) if settings.get("news_channel_id") else None
     top = int(settings.get("top") or 5)
     # Interaction answers can only be edited or deleted for 15 minutes.
     delete_after = max(0, min(int(settings.get("delete_after", 300)), 840))
@@ -547,6 +630,31 @@ def run_bot(settings):
             return
         await answer(interaction, build_leaderboard(current["guild"], top, prof))
 
+    @tree.command(name="requests", description="What guildmates have asked to have crafted")
+    @app_commands.describe(profession="Only this profession")
+    @app_commands.autocomplete(profession=profession_names)
+    async def requests(interaction, profession: str = None):
+        await answer(interaction, build_requests(current["guild"], profession))
+
+    async def post_news():
+        """Post guild news GuildForge recorded since the last post. The first run only marks where to start."""
+        if not news_channel_id:
+            return
+        news = current["guild"].news
+        latest = max((e.get("t") or 0 for e in news), default=0)
+        if "news_posted_t" not in state:
+            state["news_posted_t"] = latest
+            save_json(STATE_PATH, state)
+            return
+        fresh = [e for e in news if (e.get("t") or 0) > state["news_posted_t"]]
+        if not fresh:
+            return
+        channel = client.get_channel(news_channel_id) or await client.fetch_channel(news_channel_id)
+        for chunk in range(0, len(fresh), 15):
+            await channel.send("\n".join(news_line(e) for e in fresh[chunk:chunk + 15]))
+        state["news_posted_t"] = latest
+        save_json(STATE_PATH, state)
+
     async def refresh_leaderboard():
         """Edit the leaderboard message in place; post a new one if it's missing."""
         if not channel_id:
@@ -579,6 +687,7 @@ def run_bot(settings):
                     if current["stamp"] is not None:
                         current["guild"] = load_guild(settings)
                     await refresh_leaderboard()
+                    await post_news()
                     current["stamp"] = stamp
             except Exception as e:  # keep the bot running; the next save tries again
                 print(f"GuildForge bot: update failed: {e}", file=sys.stderr)
@@ -626,6 +735,10 @@ def main():
         if sample:
             print()
             print(as_text(build_crafts(guild, sample["name"])))
+        print()
+        print(as_text(build_requests(guild)))
+        print()
+        print(as_text(build_news(guild)))
         return
     run_bot(settings)
 

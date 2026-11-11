@@ -2,6 +2,17 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.2.0] - 2026-11-11
+
+### Added
+- **Guild Home**: the window now opens on a Home tab with guild news, who's online with GuildForge and their professions, requests you can make, cooldowns that are ready, and your Request Board and Shopping List at a glance. Searching from Home searches the whole guild.
+- **Guild news**: skill milestones (every 25 points), professions taken up, newly learned recipes (marked when they're the first in the guild) and finished requests, worked out from what guildmates already share. A leveling spree within a few hours stays one line. Nothing shows for data you're only catching up on.
+- **Request board**: expand a recipe and click **Request** (with an optional note) to ask the guild for it, even when no crafter is online. Guildmates who know the recipe see it under **You can make**, in chat and on the minimap button tooltip; **I'll make it** whispers you and marks it taken for everyone. **Done** takes it down and credits the crafter in guild news. Up to 5 open requests each, closed after 3 days; late logins catch up. `/gf home` and `/gf requests` open the new tabs.
+- **Discord bot**: `/requests` lists the request board, and guild news can be posted to a channel (`news_channel_id`).
+
+### Note
+- Guildmates on older versions keep syncing as before, but don't see or answer requests until they update.
+
 ## [1.1.3] - 2026-11-07
 
 ### Changed

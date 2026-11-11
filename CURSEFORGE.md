@@ -10,6 +10,14 @@ Built for **WoW Forever**. Also works on **Classic Era**.
 
 ![GuildForge: every profession in your guild at a glance](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.webp)
 
+## Your guild's crafting hub
+
+The window opens on **Home**: guild news (who hit a skill milestone, learned a recipe first in the guild, or finished a request), who's online with GuildForge and their professions, requests you can make, and cooldowns that are ready.
+
+## Request it, even when nobody's on
+
+Expand a recipe and click **Request**, with an optional note. It goes on the guild's **Request Board**: guildmates who can make it see it (and get a heads-up in chat), **I'll make it** whispers you and marks it taken, and **Done** credits the crafter in guild news. Requests close after 3 days, and guildmates who log in later catch up.
+
 ## Find a crafter in seconds
 
 Pick a profession from the tabs down the side and see everyone in the guild who has it, ranked by skill. A green dot means they're online right now; offline crafters show when they were last seen. Click a crafter to see just their recipes.
@@ -43,7 +51,7 @@ If your guild uses [Guild Bank Toons](https://github.com/kota150/GuildBankToons)
 
 ## Your guild's crafters in Discord
 
-An optional Discord bot ([setup on GitHub](https://github.com/TheFrosty02/GuildForge#discord-bot)) keeps a crafting leaderboard pinned in a channel and updates it in place, and adds `/levels`, `/crafts` and `/leaderboard` commands whose answers only the asker sees. One guildmate runs it on their PC; it's not part of the addon download.
+An optional Discord bot ([setup on GitHub](https://github.com/TheFrosty02/GuildForge#discord-bot)) keeps a crafting leaderboard pinned in a channel and updates it in place, can post guild news to a channel, and adds `/levels`, `/crafts`, `/leaderboard` and `/requests` commands whose answers only the asker sees. One guildmate runs it on their PC; it's not part of the addon download.
 
 ## Also in the box
 
@@ -71,6 +79,7 @@ Get your guildmates to install it too: the more people running GuildForge, the m
 | `/gf` | Open or close GuildForge |
 | `/gf sync` | Ask the guild for anything that changed |
 | `/gf settings` | Open the settings |
+| `/gf requests` | Open the Request Board |
 | `/gf who` | List guildmates online with GuildForge and their versions |
 | `/gf clear` | Forget received data and download it fresh |
 | `/gf log` | Open the message log |

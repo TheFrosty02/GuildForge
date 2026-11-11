@@ -8,6 +8,23 @@ Built for **WoW Forever**, and also works on **Classic Era**.
 
 ## Features
 
+### Guild Home
+The window opens on **Home**, the guild's crafting hub at a glance:
+
+- **Guild news**: who reached a new skill milestone (every 25 points), took up a profession, learned a recipe (flagged when they're the first in the guild), or finished a request. Shift-click a recipe in the news to link it.
+- **Online with GuildForge**: who's on right now, with their professions.
+- **Requests you can make**, **cooldowns ready**, and your **Request Board** and **Shopping List** at a glance (click either to open it).
+
+Typing in the search box from Home searches the whole guild, like the All tab.
+
+### Request board
+Need something crafted when nobody who can make it is online? Expand the recipe and click **Request**, with an optional note ("have mats", "tip 5g"). It goes on the guild's **Request Board** (the note tab at the bottom of the tabs):
+
+- Guildmates who know the recipe see it under **You can make**, get a chat line when it's posted, and see a count on the minimap button.
+- **I'll make it** whispers you and marks it as taken for everyone, so two people don't both craft it.
+- Once you have it, click **Done**: it comes off every board and the crafter gets the credit in guild news. **Cancel** takes it down without that.
+- Up to 5 open requests each; they close on their own after 3 days. Guildmates who log in later catch up on the board.
+
 ### Every profession at a glance
 The **All** tab lists each profession with how many guildmates have it, how many recipes are shared, and the top crafter. Profession tabs run down the right side of the window, spellbook style, with their icons — professions nobody in the guild has yet are greyed out.
 
@@ -76,6 +93,8 @@ Your guildmates need GuildForge too — the more people running it, the more com
 | `/guildforge push` | Re-share all of your recipes in full |
 | `/guildforge refresh` | Rescan your own professions |
 | `/guildforge settings` | Open the settings panel |
+| `/guildforge home` | Open the Home tab |
+| `/guildforge requests` | Open the Request Board |
 | `/guildforge minimap` | Show or hide the minimap button |
 | `/guildforge clear` | Forget received guild data and download it again fresh |
 | `/guildforge who` | List guildmates online with GuildForge and their versions |
@@ -92,6 +111,8 @@ The bot in [`companion/`](companion/) brings GuildForge to your guild's Discord:
 - **`/levels [character]`**: one character's professions with progress bars, or everyone's levels.
 - **`/crafts character [profession] [search]`**: what a character can craft, optionally one profession or recipes containing a word. Character and profession names autocomplete.
 - **`/leaderboard [profession]`**: the leaderboard, or a full ranking for one profession.
+- **`/requests [profession]`**: open requests from GuildForge's request board, with who's on each one.
+- **Guild news in a channel** (optional, `news_channel_id`): skill milestones, newly learned recipes and finished requests, posted as they're saved. The first run only marks where to start, so it doesn't post the backlog.
 
 Answers are only visible to the person who asked (or sent to them by DM with `reply_in_dm`), nothing shows in the channel for anyone else, and each answer is deleted after `delete_after` seconds (5 minutes by default, at most 14).
 
@@ -107,12 +128,12 @@ WoW addons can't reach the internet, so the bot reads the data GuildForge saves 
 
 1. **Make the bot** at <https://discord.com/developers/applications> → **New Application** (name it GuildForge) → **Bot** → **Reset Token** and copy the token. Keep it secret: anyone with it controls the bot. No privileged intents are needed.
 2. **Invite it**: **OAuth2** → **URL Generator** → scopes `bot` and `applications.commands`; bot permissions **View Channels**, **Send Messages**, **Embed Links** and **Read Message History**. Open the generated link and pick your server.
-3. **Get the IDs**: in Discord, **User Settings → Advanced → Developer Mode** on, then right-click your server → **Copy Server ID**, and right-click the leaderboard channel → **Copy Channel ID**.
+3. **Get the IDs**: in Discord, **User Settings → Advanced → Developer Mode** on, then right-click your server → **Copy Server ID**, and right-click the leaderboard channel → **Copy Channel ID** (and the news channel, if you want one).
 4. **Install Python 3.8 or newer** (python.org; on Windows tick *Add python.exe to PATH*), then in the `companion` folder:
    ```
    pip install -r requirements.txt
    ```
-5. **Settings**: copy `guildforge_discord.example.json` to `guildforge_discord.json` and fill in `token`, `server_id`, `leaderboard_channel_id` and `wow_dir` (your World of Warcraft folder, for example `C:/Program Files (x86)/World of Warcraft`). That file is git-ignored.
+5. **Settings**: copy `guildforge_discord.example.json` to `guildforge_discord.json` and fill in `token`, `server_id`, `leaderboard_channel_id`, `news_channel_id` (or leave it empty for no news posts) and `wow_dir` (your World of Warcraft folder, for example `C:/Program Files (x86)/World of Warcraft`). That file is git-ignored.
 6. **Check it** without touching Discord; this prints the leaderboard and sample answers from your saved data:
    ```
    python3 guildforge_discord.py --dry-run
