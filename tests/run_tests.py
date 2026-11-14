@@ -338,7 +338,7 @@ MODERN_PROFESSIONS = r'''
   LOADED=false
   local names={[101]='Enchant Bracer - Minor Health',[102]='Runed Copper Rod',[103]='Enchant Chest - Minor Mana',
     [104]='Enchant Bracer - Minor Stamina',[105]='Enchant Cloak - Minor Agility',[106]='Lesser Magic Wand'}
-  GRAY={[103]=60,[104]=130,[105]=110}
+  GRAY={[101]=45,[102]=20,[103]=60,[104]=130,[105]=110}
   C_TradeSkillUI={
     GetBaseProfessionInfo=function() return {professionName='Enchanting'} end,
     IsTradeSkillLinked=function() return false end, IsTradeSkillGuild=function() return false end,
@@ -366,6 +366,9 @@ def test_forever_profession_window():
     run([a, b])
     check('Forever: recipes that load after the profession window opens are still shared',
           b.members().get('Kota Arkbinky') == (1, 2), 'Krystal sees %s' % b.members())
+    order = b.lua.execute("local _,r=GF_NS.gather('Enchanting'); local t={} for i,x in ipairs(r) do t[i]=x.name end return table.concat(t,',')")
+    check('Forever: recipe levels are shared and guildmates sort by them',
+          order == 'Runed Copper Rod,Enchant Bracer - Minor Health', 'Krystal sees %s' % order)
 
     # The unlearned recipe shows in Kota's own Not known list but isn't shared, so check-ins send no catalog,
     # and a catalog sent by 1.0.9 or earlier (U) is ignored.

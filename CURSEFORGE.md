@@ -26,7 +26,7 @@ Pick a profession from the tabs down the side and see everyone in the guild who 
 
 ## Know exactly what it takes
 
-Every recipe shows its icon, quality, who can make it, and whether **you** have the mats: `Mats ready x2` or `Missing mats`. Expand a recipe to see each reagent with your bag count (and what's sitting in your bank).
+Every recipe shows its icon, quality, who can make it, and whether **you** have the mats: `Mats ready x2`. Click a recipe to see each reagent with your bag count (and what's sitting in your bank).
 
 - **Ask a crafter:** one click whispers the best online crafter with the item link and the mats you already have.
 - **Add to list:** queue it on your shopping list.

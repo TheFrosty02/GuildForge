@@ -55,7 +55,7 @@ local professionIcons={
   Skinning='Interface\\Icons\\INV_Misc_Pelt_Wolf_01',
   All='Interface\\Icons\\INV_Misc_Book_09',
   Shopping='Interface\\Icons\\INV_Misc_Bag_08',
-  Home='Interface\\Icons\\Ability_Warrior_BattleShout',
+  Home='Interface\\Icons\\INV_Shirt_GuildTabard_01',
   Requests='Interface\\Icons\\INV_Misc_Note_01',
 }
 local specialTabs={All='All Professions',Shopping='Shopping List',Home='Guild Home',Requests='Request Board'}
@@ -480,7 +480,7 @@ function GF.detailEntry(prof,name)
   for _,r in ipairs(info.reagents or {}) do
     if r.id then parts[#parts+1]=r.id..':'..(r.n or 1) end
   end
-  return clean(name)..'~'..(info.link or '')..'~'..table.concat(parts,',')
+  return clean(name)..'~'..(info.link or '')..'~'..table.concat(parts,',')..(info.gray and ('~'..info.gray) or '')
 end
 queueRecipes=function(prof,force)
   local mine=db and db[key()]
@@ -672,7 +672,7 @@ handleAsk=function(extra)
 end
 
 function GF.applyDetail(prof,entry)
-  local name,link,reagentText=entry:match('^([^~]+)~([^~]*)~(.*)$')
+  local name,link,reagentText,gray=entry:match('^([^~]+)~([^~]*)~([^~]*)~?(%d*)$')
   if not name then return end
   name=clean(name)
   recipeInfo[prof]=recipeInfo[prof] or {}
@@ -684,7 +684,7 @@ function GF.applyDetail(prof,entry)
   for id,count in reagentText:gmatch('(%d+):(%d+)') do
     if #reagents<12 then reagents[#reagents+1]={id=tonumber(id),n=tonumber(count)} end
   end
-  recipeInfo[prof][name]={link=link,reagents=reagents,remote=true}
+  recipeInfo[prof][name]={link=link,reagents=reagents,remote=true,gray=tonumber(gray)}
   requestUpdate()
 end
 function GF.applyCatalog(prof,entry)
@@ -766,12 +766,14 @@ end
 local function itemId(link)
   return type(link)=='string' and tonumber(link:match('item:(%d+)')) or nil
 end
-local function storeInfo(prof,name,link,icon,reagents)
+local function storeInfo(prof,name,link,icon,reagents,gray)
   recipeInfo[prof]=recipeInfo[prof] or {}
-  recipeInfo[prof][name]={link=link,icon=icon,reagents=reagents}
+  recipeInfo[prof][name]={link=link,icon=icon,reagents=reagents,gray=gray}
 end
+-- The skill level a recipe sorts by: where it turns gray (Forever's profession window), else what a trainer asks.
+function GF.recipeLevel(info) return info and (info.gray or info.req) or nil end
 -- Saves a finished scan and queues it for the guild when the recipe list changed.
-local function commitScan(prof,recipes,warnFiltered)
+local function commitScan(prof,recipes,warnFiltered,levels)
   if #recipes==0 then return end
   table.sort(recipes)
   local record=db and db[key()]
@@ -792,7 +794,11 @@ local function commitScan(prof,recipes,warnFiltered)
     record.recipeUpdated[prof]=now()
     queueRecipes(prof,true)
     log('Scanned '..#recipes..' visible '..prof..' recipes; queued guild sharing.')
+  elseif levels and not (record.levelsShared and record.levelsShared[prof]) then
+    -- Lists shared before 1.2.0 had no recipe levels; send this one again once so guildmates can sort by level.
+    queueRecipes(prof,true)
   end
+  if levels then record.levelsShared=record.levelsShared or {}; record.levelsShared[prof]=true end
   requestUpdate()
 end
 -- Records a recipe cooldown seen in the trade window; a recipe that had one and now reports none is ready.
@@ -883,7 +889,7 @@ function GF.scanModernTradeSkill()
       if info.learned then
         recipes[#recipes+1]=recipe
         local link,reagents=GF.schematicDetails(recipeID)
-        storeInfo(prof,recipe,link,info.icon,reagents)
+        storeInfo(prof,recipe,link,info.icon,reagents,tonumber(info.maxTrivialLevel))
         if T.GetRecipeCooldown then GF.noteRecipeCooldown(prof,recipe,tonumber((T.GetRecipeCooldown(recipeID)))) end
       elseif not recipeInfo[prof][recipe] or recipeInfo[prof][recipe].source=='Not learned' then
         -- Unlearned recipes feed your own "not known in guild" list. Forever doesn't give the skill a recipe
@@ -893,7 +899,7 @@ function GF.scanModernTradeSkill()
       end
     end
   end
-  commitScan(prof,recipes,true)
+  commitScan(prof,recipes,true,true)
 end
 -- Trainers list recipes nobody may know yet; catalogue them for the "not known in guild" list.
 local RANK_UPGRADES={Apprentice=true,Journeyman=true,Expert=true,Artisan=true,Master=true,Grand=true}
@@ -1019,6 +1025,12 @@ end
 function GF.doRefresh()
   save(); announce(true); scanRecipes(); checkCooldowns(); requestUpdate()
   log('Local professions refreshed and shared.')
+end
+-- The window's Sync button: rescan and share your own professions, then ask the guild what changed.
+function GF.syncNow()
+  save(); announce(true); scanRecipes(); if checkCooldowns() then queueCooldowns() end
+  rollCall(true); requestUpdate()
+  log('Your professions shared; guild sync request sent.')
 end
 
 -- Guild roster: who is online, when offline members were last seen, and who runs GuildForge.
@@ -1813,7 +1825,13 @@ function GF.gather(prof)
   end
   table.sort(crafters,byAvailability)
   for _,r in ipairs(recipes) do table.sort(r.crafters,byAvailability) end
-  table.sort(recipes,function(a,b) return a.name<b.name end)
+  -- Lowest skill level first, like the Not known in guild list; recipes with no level known go last.
+  local info=recipeInfo and recipeInfo[prof] or {}
+  for _,r in ipairs(recipes) do r.level=GF.recipeLevel(info[r.name]) or 9999 end
+  table.sort(recipes,function(a,b)
+    if a.level~=b.level then return a.level<b.level end
+    return a.name<b.name
+  end)
   return crafters,recipes,byName
 end
 function GF.hasProfession(prof)
@@ -1952,12 +1970,13 @@ function GF.iconSlot(b,size)
 end
 local factories={}
 factories.profHeader=function()
-  local b=CreateFrame('Button',nil,scrollContent,BACKDROP_TEMPLATE)
-  b:SetHeight(40); skin(b,.85)
-  b.icon=b:CreateTexture(nil,'ARTWORK'); b.icon:SetSize(30,30); b.icon:SetPoint('LEFT',6,0); b.icon:SetTexCoord(.07,.93,.07,.93)
-  b.name=fontString(b,'GameFontNormalLarge'); b.name:SetPoint('LEFT',b.icon,'RIGHT',10,0)
+  local b=CreateFrame('Button',nil,scrollContent)
+  b:SetHeight(34)
+  local bg=b:CreateTexture(nil,'BACKGROUND'); bg:SetAllPoints(); bg:SetColorTexture(1,1,1,.035)
+  b.icon=b:CreateTexture(nil,'ARTWORK'); b.icon:SetSize(26,26); b.icon:SetPoint('LEFT',6,0); b.icon:SetTexCoord(.07,.93,.07,.93)
+  b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.icon,'RIGHT',10,0)
   b.info=fontString(b,'GameFontHighlightSmall','RIGHT'); b.info:SetPoint('RIGHT',-12,0)
-  local hl=addHighlight(b,.35); hl:ClearAllPoints(); hl:SetPoint('TOPLEFT',4,-4); hl:SetPoint('BOTTOMRIGHT',-4,4)
+  addHighlight(b,.3)
   return b
 end
 factories.section=function()
@@ -1977,9 +1996,8 @@ factories.crafter=function()
   b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
   b.selected=b:CreateTexture(nil,'BORDER'); b.selected:SetAllPoints()
   b.selected:SetTexture('Interface\\QuestFrame\\UI-QuestTitleHighlight'); b.selected:SetBlendMode('ADD'); b.selected:SetVertexColor(1,.75,.2)
-  b.place=fontString(b,'GameFontDisableSmall','RIGHT'); b.place:SetPoint('LEFT',2,0); b.place:SetWidth(22)
-  b.dot=b:CreateTexture(nil,'ARTWORK'); b.dot:SetTexture(DOT_TEXTURE); b.dot:SetSize(9,9); b.dot:SetPoint('LEFT',30,0)
-  b.name=fontString(b,'GameFontHighlight'); b.name:SetPoint('LEFT',44,0); b.name:SetWidth(170)
+  b.dot=b:CreateTexture(nil,'ARTWORK'); b.dot:SetTexture(DOT_TEXTURE); b.dot:SetSize(9,9); b.dot:SetPoint('LEFT',6,0)
+  b.name=fontString(b,'GameFontHighlight'); b.name:SetPoint('LEFT',22,0); b.name:SetWidth(190)
   b.bar=CreateFrame('StatusBar',nil,b); b.bar:SetSize(160,13); b.bar:SetPoint('LEFT',220,0)
   b.bar:SetStatusBarTexture('Interface\\TargetingFrame\\UI-StatusBar')
   local barBg=b.bar:CreateTexture(nil,'BACKGROUND'); barBg:SetAllPoints(); barBg:SetColorTexture(0,0,0,.55)
@@ -1993,9 +2011,10 @@ factories.recipe=function()
   local b=CreateFrame('Button',nil,scrollContent)
   b:SetHeight(26)
   b.stripe=b:CreateTexture(nil,'BACKGROUND'); b.stripe:SetAllPoints()
-  b.toggle=b:CreateTexture(nil,'ARTWORK'); b.toggle:SetSize(14,14); b.toggle:SetPoint('LEFT',3,0)
-  GF.iconSlot(b,22); b.iconBorder:SetPoint('LEFT',20,0)
-  b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.iconBorder,'RIGHT',8,0); b.name:SetWidth(270)
+  b.selected=b:CreateTexture(nil,'BORDER'); b.selected:SetAllPoints()
+  b.selected:SetTexture('Interface\\QuestFrame\\UI-QuestTitleHighlight'); b.selected:SetBlendMode('ADD'); b.selected:SetVertexColor(1,.75,.2); b.selected:SetAlpha(.5)
+  GF.iconSlot(b,22); b.iconBorder:SetPoint('LEFT',6,0)
+  b.name=fontString(b,'GameFontNormal'); b.name:SetPoint('LEFT',b.iconBorder,'RIGHT',8,0); b.name:SetWidth(284)
   b.crafters=fontString(b,'GameFontHighlightSmall'); b.crafters:SetPoint('LEFT',330,0); b.crafters:SetWidth(180)
   b.mats=fontString(b,'GameFontHighlightSmall','RIGHT'); b.mats:SetPoint('RIGHT',-8,0); b.mats:SetWidth(120)
   addHighlight(b)
@@ -2236,9 +2255,12 @@ function GF.addLinkCard(ctx,tab,label,info)
   h.icon:SetTexture(professionIcons[tab]); h.icon:SetDesaturated(false)
   h.name:SetText(label); h.info:SetText(info)
   h:SetScript('OnClick',function() releaseSearchFocus(); selectTab(tab) end)
-  ctx.place(h,42)
+  ctx.place(h,36)
   return h
 end
+-- Cooking, First Aid and Fishing are left out of Home's online list to keep it short.
+GF.SECONDARY={Cooking=true,['First Aid']=true,Fishing=true}
+function GF.countText(shown,total) return shown==total and tostring(total) or (shown..' of '..total) end
 function GF.drawHome(ctx)
   local requests=GF.allRequests()
   local canMake,open,mineOpen={},0,0
@@ -2266,8 +2288,10 @@ function GF.drawHome(ctx)
       ctx.nextStripe(b.stripe)
       local profs,first={},nil
       for _,p in ipairs(m.record.professions or {}) do
-        first=first or p.name
-        profs[#profs+1]=p.name..' |cffffd100'..p.rank..'|r'
+        if not GF.SECONDARY[p.name] then
+          first=first or p.name
+          profs[#profs+1]=p.name..' |cffffd100'..p.rank..'|r'
+        end
       end
       b.icon:SetTexture(professionIcons[first or ''] or QUESTION_ICON)
       b.text:SetText((m.isMe and '|cff40ff40' or '|cffffffff')..m.name..'|r'..(#profs>0 and ('   |cffa0a0a0'..table.concat(profs,'  ·  ')..'|r') or ''))
@@ -2358,7 +2382,6 @@ update=function()
     local b=acquire('crafter')
     nextStripe(b.stripe)
     b.selected:SetShown(selectedCrafter[prof]==c.key)
-    b.place:SetText(index..'.')
     GF.setDot(b.dot,c.online)
     b.name:SetText(c.character..(c.isMe and ' |cff40ff40(You)|r' or ''))
     b.bar:SetMinMaxValues(0,math.max(1,c.max))
@@ -2366,7 +2389,7 @@ update=function()
     b.bar:SetStatusBarColor(GF.rankColor(c.rank))
     b.bar.text:SetText(c.rank..' / '..c.max)
     b.recipes:SetText(c.recipeCount>0 and ('|cffffd100'..c.recipeCount..'|r recipes') or '|cff808080no recipes|r')
-    b.seen:SetText(GF.availabilityText(c))
+    b.seen:SetText(c.online and '' or GF.availabilityText(c))
     b:SetScript('OnClick',function()
       releaseSearchFocus()
       selectedCrafter[prof]=(selectedCrafter[prof]~=c.key) and c.key or nil
@@ -2406,7 +2429,7 @@ update=function()
     local info=r.info or {}
     local b=acquire('recipe')
     nextStripe(b.stripe,.045)
-    b.toggle:SetTexture(nil)
+    b.selected:Hide()
     b.icon:SetTexture(GF.recipeIcon(prof,r.info))
     b.name:SetText(GF.recipeLabel(r.name,r.info))
     local level=info.req and ('Req '..info.req..'  ·  ') or (info.gray and ('Gray at '..info.gray..'  ·  ')) or ''
@@ -2434,7 +2457,7 @@ update=function()
     local open=recipeOpen[id]==true
     local b=acquire('recipe')
     nextStripe(b.stripe,.045)
-    b.toggle:SetTexture(GF.toggleTexture(open))
+    b.selected:SetShown(open)
     b.icon:SetTexture(GF.recipeIcon(prof,r.info))
     b.name:SetText(GF.recipeLabel(r.name,r.info))
     if #r.crafters>0 then
@@ -2449,13 +2472,7 @@ update=function()
       local info=r.info or {}
       b.crafters:SetText('|cff808080'..(info.req and ('Req '..info.req..'  ·  ') or '')..(info.source or 'Nobody yet')..'|r')
     end
-    if r.times==nil then
-      b.mats:SetText('|cff808080Reagents unknown|r')
-    elseif r.times>0 then
-      b.mats:SetText('|cff40ff40Mats ready'..(r.times>1 and (' x'..r.times) or '')..'|r')
-    else
-      b.mats:SetText('|cffff5a5aMissing mats|r')
-    end
+    b.mats:SetText((r.times or 0)>0 and ('|cff40ff40Mats ready'..(r.times>1 and (' x'..r.times) or '')..'|r') or '')
     b:SetScript('OnClick',function()
       releaseSearchFocus()
       if IsModifiedClick and IsModifiedClick('CHATLINK') then insertChatLink(r.info and r.info.link); return end
@@ -2580,7 +2597,7 @@ update=function()
         h.icon:SetDesaturated(d.crafterCount==0)
         h:SetScript('OnClick',function() releaseSearchFocus(); selectTab(prof) end)
         y=y+2
-        place(h,42)
+        place(h,34)
         if searching then
           stripe=0
           for i,c in ipairs(d.fc) do addCrafter(prof,c,i,true) end
@@ -2675,13 +2692,13 @@ update=function()
   else
     local prof=selected
     local d=GF.professionData(prof,term)
-    if addSection(prof..'|crafters','Crafters',#d.fc..' of '..#d.crafters) then
+    if addSection(prof..'|crafters','Crafters',GF.countText(#d.fc,#d.crafters)) then
       if #d.fc==0 then addNote('No guildmates have shared '..prof..' yet.',16) end
       for i,c in ipairs(d.fc) do addCrafter(prof,c,i,false) end
     end
     addCooldownSection(prof..'|cooldowns',prof)
     if craftable[prof] or #d.recipes>0 then
-      local extra=#d.fr..' of '..#d.recipes
+      local extra=GF.countText(#d.fr,#d.recipes)
       if d.filterName then extra='|cffffd100'..d.filterName..'|r only  ·  '..extra end
       if addSection(prof..'|recipes','Recipes',extra) then
         if #d.fr==0 then
@@ -2691,7 +2708,7 @@ update=function()
       end
     end
     if craftable[prof] and not d.filter then
-      if addSection(prof..'|unknown','Not known in guild',#d.unknown..' of '..d.unknownTotal,true) then
+      if addSection(prof..'|unknown','Not known in guild',GF.countText(#d.unknown,d.unknownTotal),true) then
         if d.unknownTotal==0 then
           addNote('Visit a '..prof..' trainer (or open the profession on Forever) to list recipes nobody in the guild knows yet.',16)
         end
@@ -2701,7 +2718,7 @@ update=function()
     headerIcon:SetTexture(professionIcons[prof])
     headerTitle:SetText(prof)
     local sub=#d.crafters..' crafters  ·  '..#d.recipes..' recipes'
-    if craftable[prof] then sub=sub..'  ·  |cff40ff40'..d.ready..' you can craft now|r' end
+    if craftable[prof] and d.ready>0 then sub=sub..'  ·  |cff40ff40'..d.ready..' you can craft now|r' end
     if d.filterName then sub=sub..'  ·  showing |cffffd100'..d.filterName..'|r (click again to clear)' end
     headerSub:SetText(sub)
   end
@@ -2711,8 +2728,8 @@ update=function()
     if not specialTabs[t.name] then t:GetNormalTexture():SetDesaturated(not GF.hasProfession(t.name)) end
   end
   local guild=(IsInGuild and IsInGuild()) and (GetGuildInfo and GetGuildInfo('player') or 'In guild') or 'Not in guild'
-  local queued=GF.queuedCount()>0 and ('  |  sharing '..GF.queuedCount()..' queued') or ''
-  status:SetText(string.format('|cffffd100%s|r  |  %d syncs  |  %d recipe batches%s',guild,received,recipeReceived,queued))
+  local queued=GF.queuedCount()>0 and ('  |cffa0a0a0·  sharing '..GF.queuedCount()..' messages|r') or ''
+  status:SetText('|cffffd100'..guild..'|r'..queued)
 end
 
 selectTab=function(name)
@@ -2726,7 +2743,7 @@ local function makeTab(index,name)
   local t=CreateFrame('CheckButton',nil,window)
   t.name=name
   t:SetSize(32,32)
-  t:SetPoint('TOPLEFT',window,'TOPRIGHT',-6,-40-(index-1)*32)
+  t:SetPoint('TOPLEFT',window,'TOPRIGHT',-6,-26-(index-1)*32)
   local bg=t:CreateTexture(nil,'BACKGROUND')
   bg:SetTexture('Interface\\SpellBook\\SpellBook-SkillLineTab'); bg:SetSize(64,64); bg:SetPoint('TOPLEFT',-3,11)
   t:SetNormalTexture(professionIcons[name])
@@ -2917,8 +2934,13 @@ local function makeWindow()
     b:SetScript('OnClick',function(...) releaseSearchFocus(); fn(...) end)
     return b
   end
-  local refresh=button('Refresh',80,{'TOPLEFT',22,-36},GF.doRefresh)
-  local sync=button('Sync Guild',90,{'LEFT',refresh,'RIGHT',6,0},doSync)
+  local sync=button('Sync',70,{'TOPLEFT',22,-36},GF.syncNow)
+  sync:SetScript('OnEnter',function(self)
+    GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine('Sync',1,.82,0)
+    GameTooltip:AddLine('Share your professions and ask the guild for anything new. This also happens on its own when you log in.',.85,.85,.85,true)
+    GameTooltip:Show()
+  end)
+  sync:SetScript('OnLeave',GameTooltip_Hide)
   local gear=CreateFrame('Button',nil,f)
   gear:SetSize(22,22); gear:SetPoint('LEFT',sync,'RIGHT',8,0)
   gear:SetNormalTexture('Interface\\Icons\\INV_Misc_Gear_01')
@@ -2951,13 +2973,13 @@ local function makeWindow()
   matsCheck:SetScript('OnLeave',GameTooltip_Hide)
 
   local header=CreateFrame('Frame',nil,f,BACKDROP_TEMPLATE)
-  header:SetPoint('TOPLEFT',16,-64); header:SetPoint('TOPRIGHT',-16,-64); header:SetHeight(52); skin(header,.8)
-  headerIcon=header:CreateTexture(nil,'ARTWORK'); headerIcon:SetSize(38,38); headerIcon:SetPoint('LEFT',8,0); headerIcon:SetTexCoord(.07,.93,.07,.93)
+  header:SetPoint('TOPLEFT',16,-64); header:SetPoint('TOPRIGHT',-16,-64); header:SetHeight(40)
+  headerIcon=header:CreateTexture(nil,'ARTWORK'); headerIcon:SetSize(32,32); headerIcon:SetPoint('LEFT',6,0); headerIcon:SetTexCoord(.07,.93,.07,.93)
   headerTitle=header:CreateFontString(nil,'OVERLAY','GameFontNormalLarge'); headerTitle:SetPoint('TOPLEFT',headerIcon,'TOPRIGHT',10,-2)
   headerSub=header:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); headerSub:SetPoint('BOTTOMLEFT',headerIcon,'BOTTOMRIGHT',10,3)
 
   local inset=CreateFrame('Frame',nil,f,BACKDROP_TEMPLATE)
-  inset:SetPoint('TOPLEFT',16,-120); inset:SetPoint('BOTTOMRIGHT',-16,36); skin(inset,.75,.55,.45,.28)
+  inset:SetPoint('TOPLEFT',16,-108); inset:SetPoint('BOTTOMRIGHT',-16,34); skin(inset,.75,.55,.45,.28)
   scrollFrame=CreateFrame('ScrollFrame','GuildForgeScrollFrame',inset,'UIPanelScrollFrameTemplate')
   scrollFrame:SetPoint('TOPLEFT',8,-8); scrollFrame:SetPoint('BOTTOMRIGHT',-30,8)
   scrollFrame:SetScript('OnMouseDown',releaseSearchFocus)
@@ -2968,9 +2990,7 @@ local function makeWindow()
   f.settingsPanel=GF.makeSettingsPanel(f,inset)
   gear:SetScript('OnClick',function() releaseSearchFocus(); f.settingsPanel:SetShown(not f.settingsPanel:IsShown()) end)
 
-  status=f:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); status:SetPoint('BOTTOMLEFT',22,17)
-  local hint=f:CreateFontString(nil,'OVERLAY','GameFontDisableSmall'); hint:SetPoint('BOTTOMRIGHT',-22,17)
-  hint:SetText('Shift-click a recipe or reagent to link it')
+  status=f:CreateFontString(nil,'OVERLAY','GameFontHighlightSmall'); status:SetPoint('BOTTOMLEFT',22,16)
 
   makeTab(1,'Home')
   makeTab(2,'All')

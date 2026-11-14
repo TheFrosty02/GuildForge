@@ -34,7 +34,7 @@ Open a profession to see every guildmate who has it, ranked by skill with a colo
 ![Tailoring tab with crafters and recipes](docs/screenshots/profession.webp)
 
 ### Recipes with reagents and your mat counts
-Every known recipe shows its icon, item-quality color, who can craft it, and whether **you** have the mats in your bags (`Mats ready x17`, `Missing mats`). Expand a recipe to see each reagent with what you have against what's needed, plus anything sitting in your bank.
+Every known recipe shows its icon, item-quality color, who can craft it, and whether **you** have the mats in your bags (`Mats ready x17`). Click a recipe to expand it and see each reagent with what you have against what's needed, plus anything sitting in your bank.
 
 - **Ask a crafter** — one click whispers the best online crafter with the item link and the mats you already have.
 - **Add to list** — queue it on your shopping list.
@@ -64,7 +64,7 @@ If your guild uses the [Guild Bank Toons](https://github.com/kota150/GuildBankTo
 - **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
 
 ### Settings
-Click the gear next to **Sync Guild** to toggle the minimap button, item tooltips, syncing on login and quiet mode, adjust the window scale, or re-share all of your recipes. If your data ever looks wrong, **Clear my data** forgets everything you've received from guildmates (keeping your own professions) and downloads it fresh.
+Click the gear next to **Sync** to toggle the minimap button, item tooltips, syncing on login and quiet mode, adjust the window scale, or re-share all of your recipes. If your data ever looks wrong, **Clear my data** forgets everything you've received from guildmates (keeping your own professions) and downloads it fresh.
 
 ![Settings panel](docs/screenshots/settings.png)
 

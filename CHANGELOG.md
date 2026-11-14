@@ -2,13 +2,26 @@
 
 All notable changes to GuildForge are listed here.
 
-## [1.2.0] - 2026-11-11
+## [1.2.0] - 2026-11-14
 
 ### Added
 - **Guild Home**: the window now opens on a Home tab with guild news, who's online with GuildForge and their professions, requests you can make, cooldowns that are ready, and your Request Board and Shopping List at a glance. Searching from Home searches the whole guild.
 - **Guild news**: skill milestones (every 25 points), professions taken up, newly learned recipes (marked when they're the first in the guild) and finished requests, worked out from what guildmates already share. A leveling spree within a few hours stays one line. Nothing shows for data you're only catching up on.
 - **Request board**: expand a recipe and click **Request** (with an optional note) to ask the guild for it, even when no crafter is online. Guildmates who know the recipe see it under **You can make**, in chat and on the minimap button tooltip; **I'll make it** whispers you and marks it taken for everyone. **Done** takes it down and credits the crafter in guild news. Up to 5 open requests each, closed after 3 days; late logins catch up. `/gf home` and `/gf requests` open the new tabs.
 - **Discord bot**: `/requests` lists the request board, and guild news can be posted to a channel (`news_channel_id`).
+
+### Changed
+- **Recipes are sorted by skill level**, lowest first, instead of alphabetically. WoW Forever gives the skill where a recipe turns gray, so that's the level used (or the trainer's required skill when that's all GuildForge knows). Each player's levels reach the guild the next time they open that profession; until then their recipes sort last.
+- The profession tabs down the side of the window sit a little higher.
+- **A calmer window.** Less on screen, nothing removed:
+  - **Refresh** and **Sync Guild** are now one **Sync** button.
+  - The title area is no longer a second bordered box, so the list gets more room.
+  - The bottom bar shows just your guild (and anything still being shared). The sync counters are still in `/gf status`.
+  - Recipes only call out **Mats ready**. The red **Missing mats** on nearly every row is gone, and so are the **+** buttons: click anywhere on a recipe to expand it, and an open one stays highlighted.
+  - Crafters lose the rank numbers (the list is already in order) and the **Online** text next to the green dot.
+  - The All tab and Home use flat rows instead of a bordered box for each profession.
+  - Counts read "5" instead of "5 of 5" unless a search or filter is hiding some, and "0 you can craft now" is left out.
+- Home's **Online with GuildForge** list shows main professions only, leaving out Cooking, First Aid and Fishing.
 
 ### Note
 - Guildmates on older versions keep syncing as before, but don't see or answer requests until they update.
