@@ -4,7 +4,7 @@
 
 Built for **WoW Forever**, and also works on **Classic Era**.
 
-![Guild Professions overview](docs/screenshots/overview.webp)
+![Guild Home](docs/screenshots/home.png)
 
 ## Features
 
@@ -18,20 +18,24 @@ The window opens on **Home**, the guild's crafting hub at a glance:
 Typing in the search box from Home searches the whole guild, like the All tab.
 
 ### Request board
-Need something crafted when nobody who can make it is online? Expand the recipe and click **Request**, with an optional note ("have mats", "tip 5g"). It goes on the guild's **Request Board** (the note tab at the bottom of the tabs):
+Need something crafted when nobody who can make it is online? Expand the recipe and click **Request**, pick how many you need (up to 99), and add a note if you like ("have mats", "tip 5g"). It goes on the guild's **Request Board** (the note tab at the bottom of the tabs):
 
 - Guildmates who know the recipe see it under **You can make**, get a chat line when it's posted, and see a count on the minimap button.
 - **I'll make it** whispers you and marks it as taken for everyone, so two people don't both craft it.
 - Once you have it, click **Done**: it comes off every board and the crafter gets the credit in guild news. **Cancel** takes it down without that.
 - Up to 5 open requests each; they close on their own after 3 days. Guildmates who log in later catch up on the board.
 
+![Request Board](docs/screenshots/requests.png)
+
 ### Every profession at a glance
 The **All** tab lists each profession with how many guildmates have it, how many recipes are shared, and the top crafter. Profession tabs run down the right side of the window, spellbook style, with their icons — professions nobody in the guild has yet are greyed out.
+
+![Guild Professions overview](docs/screenshots/overview.png)
 
 ### Crafters, ranked and live
 Open a profession to see every guildmate who has it, ranked by skill with a color-coded bar (Apprentice, Journeyman, Expert, Artisan). A green dot means they're online right now; offline crafters show when they were last seen. Click a crafter to show only their recipes.
 
-![Tailoring tab with crafters and recipes](docs/screenshots/profession.webp)
+![Alchemy tab with crafters and recipes](docs/screenshots/profession.png)
 
 ### Recipes with reagents and your mat counts
 Every known recipe shows its icon, item-quality color, who can craft it, and whether **you** have the mats in your bags (`Mats ready x17`). Click a recipe to expand it and see each reagent with what you have against what's needed, plus anything sitting in your bank.
@@ -45,7 +49,7 @@ Every known recipe shows its icon, item-quality color, who can craft it, and whe
 ### Shopping list
 Collect the recipes you plan to make and GuildForge combines them into one list of materials, showing what you've gathered and how many more you need. The same "need 4 more" note appears on item tooltips everywhere — bags, vendors and the auction house.
 
-![Shopping list](docs/screenshots/shopping-list.webp)
+![Shopping list](docs/screenshots/shopping-list.png)
 
 ### Guild bank materials (with Guild Bank Toons)
 If your guild uses the [Guild Bank Toons](https://github.com/kota150/GuildBankToons) addon, GuildForge works with it; without it, none of this shows.

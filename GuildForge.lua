@@ -2750,7 +2750,12 @@ local function makeTab(index,name)
   t:SetHighlightTexture('Interface\\Buttons\\ButtonHilight-Square','ADD')
   t:SetCheckedTexture('Interface\\Buttons\\CheckButtonHilight')
   t:GetCheckedTexture():SetBlendMode('ADD')
-  t:SetScript('OnClick',function() releaseSearchFocus(); selectTab(name) end)
+  -- A search left in the box would turn Home and All into search results, so a new tab starts clear.
+  t:SetScript('OnClick',function()
+    releaseSearchFocus()
+    if searchBox and searchBox:GetText()~='' then searchBox:SetText('') end
+    selectTab(name)
+  end)
   t:SetScript('OnEnter',function(self)
     GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
     GameTooltip:AddLine(specialTabs[name] or name,1,.82,0)
@@ -3191,28 +3196,58 @@ clearMyData=function()
   log('Cleared your GuildForge data. Downloading fresh data from the guild...',true)
   doSync()
 end
--- Post a request: the note is optional and goes to everyone with the request.
-function GF.askRequest(prof,name,qty)
-  StaticPopup_Show('GUILDFORGE_REQUEST',qty..'× '..name,nil,{prof=prof,name=name,qty=qty})
+-- Post a request: how many (1 to 99) and an optional note, both sent to everyone with the request.
+function GF.requestQty(text) return math.max(1,math.min(99,math.floor(tonumber(text) or 1))) end
+function GF.requestDialog()
+  if GF.reqDialog then return GF.reqDialog end
+  local d=CreateFrame('Frame','GuildForgeRequestDialog',UIParent,BACKDROP_TEMPLATE)
+  GF.reqDialog=d
+  d:SetSize(340,156); d:SetPoint('CENTER',0,80); d:SetFrameStrata('FULLSCREEN_DIALOG'); d:SetToplevel(true); d:EnableMouse(true)
+  if d.SetBackdrop then
+    d:SetBackdrop({bgFile='Interface\\DialogFrame\\UI-DialogBox-Background',edgeFile='Interface\\DialogFrame\\UI-DialogBox-Border',tile=true,tileSize=32,edgeSize=32,insets={left=11,right=12,top=12,bottom=11}})
+  end
+  tinsert(UISpecialFrames,'GuildForgeRequestDialog')
+  d.title=fontString(d,'GameFontNormal','CENTER'); d.title:SetPoint('TOP',0,-20); d.title:SetWidth(300)
+  local hint=fontString(d,'GameFontDisableSmall','CENTER'); hint:SetPoint('TOP',d.title,'BOTTOM',0,-4)
+  hint:SetText('Guildmates who can make it will see it.')
+  local amountLabel=fontString(d,'GameFontHighlightSmall'); amountLabel:SetPoint('TOPLEFT',26,-66); amountLabel:SetText('Amount')
+  d.minus=smallButton(d,'-',24); d.minus:SetPoint('LEFT',d,'TOPLEFT',120,-71)
+  d.qty=CreateFrame('EditBox',nil,d,'InputBoxTemplate')
+  d.qty:SetSize(30,20); d.qty:SetPoint('LEFT',d.minus,'RIGHT',10,0); d.qty:SetAutoFocus(false)
+  d.qty:SetNumeric(true); d.qty:SetMaxLetters(2); d.qty:SetJustifyH('CENTER')
+  d.plus=smallButton(d,'+',24); d.plus:SetPoint('LEFT',d.qty,'RIGHT',4,0)
+  local noteLabel=fontString(d,'GameFontHighlightSmall'); noteLabel:SetPoint('TOPLEFT',26,-94); noteLabel:SetText('Note (optional)')
+  d.note=CreateFrame('EditBox',nil,d,'InputBoxTemplate')
+  d.note:SetSize(190,20); d.note:SetPoint('LEFT',d,'TOPLEFT',126,-99); d.note:SetAutoFocus(false); d.note:SetMaxLetters(60)
+  d.post=smallButton(d,'Post',90); d.post:SetPoint('BOTTOMRIGHT',d,'BOTTOM',-4,18)
+  d.cancel=smallButton(d,CANCEL or 'Cancel',90); d.cancel:SetPoint('BOTTOMLEFT',d,'BOTTOM',4,18)
+  local function step(n) d.qty:SetText(tostring(GF.requestQty(GF.requestQty(d.qty:GetText())+n))) end
+  local function post()
+    local data=d.data
+    d:Hide()
+    if data and GF.postRequest(data.prof,data.name,GF.requestQty(d.qty:GetText()),d.note:GetText()) then selectTab('Requests') end
+  end
+  d.minus:SetScript('OnClick',function() step(-1) end)
+  d.plus:SetScript('OnClick',function() step(1) end)
+  d.post:SetScript('OnClick',post)
+  d.cancel:SetScript('OnClick',function() d:Hide() end)
+  for _,box in ipairs({d.qty,d.note}) do
+    box:SetScript('OnEnterPressed',post)
+    box:SetScript('OnEscapePressed',function() d:Hide() end)
+    box:SetScript('OnTabPressed',function(self) (self==d.qty and d.note or d.qty):SetFocus() end)
+  end
+  d:SetScript('OnHide',function() d.qty:ClearFocus(); d.note:ClearFocus() end)
+  d:Hide()
+  return d
 end
-function GF.popupBox(popup) return popup.editBox or popup.EditBox end
-StaticPopupDialogs['GUILDFORGE_REQUEST']={
-  text='Post %s on the guild request board?\n\nGuildmates who can make it will see it. Add a note if you like (mats, tip, when):',
-  button1='Post', button2=CANCEL or 'Cancel', hasEditBox=true, maxLetters=60,
-  OnShow=function(self) local box=GF.popupBox(self); if box then box:SetText(''); box:SetFocus() end end,
-  OnAccept=function(self,data)
-    local box=GF.popupBox(self)
-    if data and GF.postRequest(data.prof,data.name,data.qty,box and box:GetText()) then selectTab('Requests') end
-  end,
-  EditBoxOnEnterPressed=function(self)
-    local popup=self:GetParent()
-    local data=popup and popup.data
-    if data and GF.postRequest(data.prof,data.name,data.qty,self:GetText()) then selectTab('Requests') end
-    if popup then popup:Hide() end
-  end,
-  EditBoxOnEscapePressed=function(self) local popup=self:GetParent(); if popup then popup:Hide() end end,
-  timeout=0, whileDead=true, hideOnEscape=true,
-}
+function GF.askRequest(prof,name,qty)
+  local d=GF.requestDialog()
+  d.data={prof=prof,name=name}
+  d.title:SetText('Request '..name)
+  d.qty:SetText(tostring(GF.requestQty(qty))); d.note:SetText('')
+  d:Show()
+  d.qty:SetFocus(); d.qty:HighlightText()
+end
 StaticPopupDialogs['GUILDFORGE_CLEAR']={
   text='Clear your GuildForge data?\n\nEverything received from guildmates is removed and downloaded again. Your own professions and recipes are kept.',
   button1=YES, button2=NO,

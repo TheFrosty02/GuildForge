@@ -8,21 +8,25 @@ GuildForge turns your whole guild into one shared profession book. Every member'
 
 Built for **WoW Forever**. Also works on **Classic Era**.
 
-![GuildForge: every profession in your guild at a glance](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.webp)
+![GuildForge Home: guild news and who's online](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/home.png)
 
 ## Your guild's crafting hub
 
 The window opens on **Home**: guild news (who hit a skill milestone, learned a recipe first in the guild, or finished a request), who's online with GuildForge and their professions, requests you can make, and cooldowns that are ready.
 
+![Every profession in your guild at a glance](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/overview.png)
+
 ## Request it, even when nobody's on
 
-Expand a recipe and click **Request**, with an optional note. It goes on the guild's **Request Board**: guildmates who can make it see it (and get a heads-up in chat), **I'll make it** whispers you and marks it taken, and **Done** credits the crafter in guild news. Requests close after 3 days, and guildmates who log in later catch up.
+Expand a recipe and click **Request**, pick how many you need, and add a note if you like. It goes on the guild's **Request Board**: guildmates who can make it see it (and get a heads-up in chat), **I'll make it** whispers you and marks it taken, and **Done** credits the crafter in guild news. Requests close after 3 days, and guildmates who log in later catch up.
+
+![The Request Board](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/requests.png)
 
 ## Find a crafter in seconds
 
 Pick a profession from the tabs down the side and see everyone in the guild who has it, ranked by skill. A green dot means they're online right now; offline crafters show when they were last seen. Click a crafter to see just their recipes.
 
-![Tailoring: crafters ranked by skill, with their recipes](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.webp)
+![Alchemy: crafters ranked by skill, with their recipes](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/profession.png)
 
 ## Know exactly what it takes
 
@@ -38,7 +42,7 @@ Every recipe shows its icon, quality, who can make it, and whether **you** have 
 
 Add the things you want to make and GuildForge totals up every material you need, how much you've gathered, and what's still missing. The same "need 4 more" note shows on item tooltips everywhere: your bags, vendors and the auction house.
 
-![Shopping list with combined materials](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.webp)
+![Shopping list with combined materials](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/shopping-list.png)
 
 ## Pull mats from the guild bank
 

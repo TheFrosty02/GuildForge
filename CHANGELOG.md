@@ -2,6 +2,14 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.2.1] - 2026-11-14
+
+### Added
+- **Request an amount**: **Request** now opens a small window where you choose how many you need (1 to 99, with − and + buttons) as well as the optional note. It starts at the count on your shopping list, if the recipe is on it. Guildmates on 1.2.0 see the amount too.
+
+### Fixed
+- A search left in the box turned Home and All into search results when you went back to them. Clicking a tab now clears the search box.
+
 ## [1.2.0] - 2026-11-14
 
 ### Added

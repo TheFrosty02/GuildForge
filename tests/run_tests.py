@@ -571,6 +571,15 @@ def bank_player(setup=''):
     return a, g
 
 
+def test_tab_clears_search():
+    # A search left over from one tab would turn Home and All into search results.
+    a, g = bank_player()
+    box = a.lua.execute("for _,f in ipairs(frames) do if f.__kind=='EditBox' and f.__scripts.OnTextChanged then return f end end")
+    box.SetText(box, 'bag')
+    g.GF_TEST_tab('Home')
+    check('tabs: switching tabs clears the search box', box.GetText(box) == '', repr(box.GetText(box)))
+
+
 def test_guild_bank_hidden():
     # No Guild Bank Toons, or no bank in this guild: nothing bank-related shows.
     for label, setup in [('addon missing', ''), ('HasBank() false', GUILD_BANK + ' BANK.has=false')]:
@@ -761,7 +770,15 @@ def test_request_board():
     k.GF_TEST_expand('Bolt of Linen Cloth')
     _, buttons = k.GF_TEST_view()
     check('requests: Request button on a recipe you can\'t make', 'Request' in buttons, str(list(buttons)))
-    kota.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',2,'have the mats')")
+    # The Request dialog: one by default, + makes it two, then a note and Post.
+    req = buttons['Request']
+    req.__scripts.OnClick(req)
+    dialog = k.GuildForgeRequestDialog
+    opened = dialog.__shown and dialog.qty.GetText(dialog.qty) == '1'
+    dialog.plus.__scripts.OnClick(dialog.plus)
+    dialog.note.SetText(dialog.note, 'have the mats')
+    dialog.post.__scripts.OnClick(dialog.post)
+    check('requests: the dialog sets an amount and posts', opened and not dialog.__shown, dialog.qty.GetText(dialog.qty))
     run([kota, bob, cara])
     want = 'Kota Arkbinky|Bolt of Linen Cloth|2||have the mats'
     check('requests: a post reaches the guild', b.GF_TEST_board() == want and c.GF_TEST_board() == want
@@ -836,6 +853,7 @@ if __name__ == '__main__':
     test_message_log()
     test_discord_bot()
     test_forever_cooldowns()
+    test_tab_clears_search()
     test_guild_bank_hidden()
     test_guild_bank_requests()
     test_guild_news()
