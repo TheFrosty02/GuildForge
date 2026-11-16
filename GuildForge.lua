@@ -773,6 +773,7 @@ end
 -- The skill level a recipe sorts by: where it turns gray (Forever's profession window), else what a trainer asks.
 function GF.recipeLevel(info) return info and (info.gray or info.req) or nil end
 -- Saves a finished scan and queues it for the guild when the recipe list changed.
+GF.filterWarned={}
 local function commitScan(prof,recipes,warnFiltered,levels)
   if #recipes==0 then return end
   table.sort(recipes)
@@ -783,7 +784,12 @@ local function commitScan(prof,recipes,warnFiltered,levels)
   local old=record.recipes[prof]
   -- Filtered windows may show fewer entries; don't erase a larger saved list.
   if old and #recipes<#old then
-    if warnFiltered then log('Recipe scan for '..prof..' showed fewer recipes than saved; check profession filters. Saved list preserved.') end
+    -- Every craft rescans the window, so say it in chat once per profession per session; the message log gets each one.
+    if warnFiltered then
+      local text='Your '..prof..' window shows '..#recipes..' of your '..#old..' saved recipes, so GuildForge kept the saved list. A filter in the profession window (like Have Materials) can hide recipes.'
+      if GF.filterWarned[prof] then if GF.note then GF.note(text) end
+      else GF.filterWarned[prof]=true; log(text) end
+    end
     return
   end
   local changed=not old or #old~=#recipes

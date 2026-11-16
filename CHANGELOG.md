@@ -8,6 +8,7 @@ All notable changes to GuildForge are listed here.
 - **Request an amount**: **Request** now opens a small window where you choose how many you need (1 to 99, with − and + buttons) as well as the optional note. It starts at the count on your shopping list, if the recipe is on it. Guildmates on 1.2.0 see the amount too.
 
 ### Fixed
+- **"Recipe scan … showed fewer recipes than saved" after every craft.** When the profession window shows fewer recipes than you have saved (usually a filter like Have Materials), GuildForge keeps your saved list and says so, but crafting rescans the window, so the message came back with every craft. It now shows once per profession per session, with the counts (the message log still records each one).
 - A search left in the box turned Home and All into search results when you went back to them. Clicking a tab now clears the search box.
 
 ## [1.2.0] - 2026-11-14

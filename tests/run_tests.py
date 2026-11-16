@@ -571,6 +571,26 @@ def bank_player(setup=''):
     return a, g
 
 
+def test_filtered_scan_warns_once():
+    # A filtered profession window keeps the saved list; crafting rescans it each time, but chat hears it once.
+    a = Player('Kota', ['Tailoring', 60, 75], ['Bolt of Linen Cloth', 'Linen Cloak', 'Brown Linen Vest'],
+               setup="PRINTED={}; print=function(s) PRINTED[#PRINTED+1]=s end")
+    a.fire('PLAYER_LOGIN')
+    a.fire('TRADE_SKILL_SHOW')
+    for _ in range(5):
+        a.step()
+    g = a.lua.globals()
+    g.TS_RECIPES = a.lua.table('Bolt of Linen Cloth')
+    for _ in range(4):  # four crafts
+        a.fire('TRADE_SKILL_UPDATE')
+        for _ in range(5):
+            a.step()
+    said = [m for m in g.PRINTED.values() if 'saved recipes' in m]
+    saved = g.GF_TEST_members()['Kota'].recipes
+    check('filtered window: warned in chat once, saved list kept', len(said) == 1 and '1 of your 3' in said[0] and saved == 3,
+          '%d messages, %d saved: %s' % (len(said), saved, said))
+
+
 def test_tab_clears_search():
     # A search left over from one tab would turn Home and All into search results.
     a, g = bank_player()
@@ -853,6 +873,7 @@ if __name__ == '__main__':
     test_message_log()
     test_discord_bot()
     test_forever_cooldowns()
+    test_filtered_scan_warns_once()
     test_tab_clears_search()
     test_guild_bank_hidden()
     test_guild_bank_requests()
