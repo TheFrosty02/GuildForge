@@ -2,6 +2,14 @@
 
 All notable changes to GuildForge are listed here.
 
+## [Unreleased]
+
+### Fixed
+- **A profession's skill showed as 0 / 0** for a guildmate whose recipes for it were shared. This happened when GuildForge didn't recognise that profession in their skill list, for example a client in another language naming it differently from its spell and window (Cooking on a Spanish client). Their recipe list was also deleted and sent again over and over. Opening that profession's window now teaches GuildForge the name, remembered for later logins. A crafter whose skill wasn't shared shows **?** instead of 0 / 0.
+
+### Changed
+- `/gf scan` also lists the skills it didn't count as professions.
+
 ## [1.2.2] - 2026-11-17
 
 ### Fixed

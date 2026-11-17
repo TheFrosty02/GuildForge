@@ -127,6 +127,29 @@ function GF.englishProfession(name,skillLine)
   end
   return GF.localNames[name] or nil
 end
+-- The skill list can name a profession differently from its spell and window (seen with Cooking on a Spanish
+-- client). Such a profession was never found, so guildmates saw its skill as 0/0. A profession window knows its
+-- skill line and rank: the one unrecognized skill with that same rank and maximum is the same profession.
+-- Returns true when it learned a new name.
+function GF.learnProfessionName(english,rank,maximum)
+  rank,maximum=tonumber(rank),tonumber(maximum)
+  if not (english and rank and maximum and maximum>0 and GetNumSkillLines and GetSkillLineInfo) then return false end
+  local match
+  for i=1,GetNumSkillLines() do
+    local name,header,_,r,_,_,m=GetSkillLineInfo(i)
+    if not header and type(name)=='string' and not isSecret(name) and tonumber(r)==rank and tonumber(m)==maximum then
+      local known=GF.englishProfession(name)
+      if known==english then return false end
+      if not known then
+        if match then return false end -- two candidates: can't tell which one it is
+        match=name
+      end
+    end
+  end
+  if not match then return false end
+  GF.ownProfessionNames[match]=english
+  return true
+end
 local QUESTION_ICON='Interface\\Icons\\INV_Misc_QuestionMark'
 -- A white circle (the portrait mask) so vertex colors show true; tinting a dark texture stays dark.
 local DOT_TEXTURE='Interface\\CharacterFrame\\TempPortraitAlphaMask'
@@ -277,6 +300,13 @@ function GF.initDB()
   GuildForgeDB.ui=GuildForgeDB.ui or {tab='All',matsOnly=false}
   GuildForgeDB.shopping=GuildForgeDB.shopping or {}
   GuildForgeDB.settings=GuildForgeDB.settings or {}
+  -- Profession names learned on this client language, kept so the next login finds them before any window opens.
+  GuildForgeDB.professionNames=GuildForgeDB.professionNames or {}
+  local locale=GetLocale and GetLocale() or 'unknown'
+  local learned=GuildForgeDB.professionNames[locale] or {}
+  for name,english in pairs(GF.ownProfessionNames) do learned[name]=english end
+  GuildForgeDB.professionNames[locale]=learned
+  GF.ownProfessionNames=learned
   local s=GuildForgeDB.settings
   if s.scale==nil then s.scale=1 end
   if s.syncOnLogin==nil then s.syncOnLogin=true end
@@ -975,10 +1005,22 @@ function GF.noteRecipeCooldown(prof,recipe,remaining)
     if setMyCooldown(name,prof,remaining or 0) then queueCooldowns() end
   end
 end
+-- A profession window is open: if your skill list missed this profession, learn its name there and re-share.
+function GF.noteWindowSkill(prof,rank,maximum)
+  local mine=db and db[key()]
+  for _,p in ipairs(mine and mine.professions or {}) do if p.name==prof then return end end
+  if GF.learnProfessionName(prof,rank,maximum) then
+    log('Your skill list names '..prof..' differently; learned it, now sharing your '..prof..' skill.')
+    save(); requestUpdate(); announce(false)
+  end
+end
 function GF.scanTradeSkill()
   if not (GetNumTradeSkills and GetTradeSkillInfo) then return end
-  local prof=GF.englishProfession(GetTradeSkillLine and GetTradeSkillLine())
+  local windowName,windowRank,windowMax
+  if GetTradeSkillLine then windowName,windowRank,windowMax=GetTradeSkillLine() end
+  local prof=GF.englishProfession(windowName)
   if not craftable[prof] then return end
+  GF.noteWindowSkill(prof,windowRank,windowMax)
   local recipes,seen={},{}
   for i=1,GetNumTradeSkills() do
     local name,kind=GetTradeSkillInfo(i)
@@ -1044,6 +1086,7 @@ function GF.scanModernTradeSkill()
   local base=T.GetBaseProfessionInfo and T.GetBaseProfessionInfo()
   local prof=base and GF.englishProfession(base.professionName,base.professionID)
   if not craftable[prof] then return end
+  GF.noteWindowSkill(prof,base.skillLevel,base.maxSkillLevel)
   recipeInfo[prof]=recipeInfo[prof] or {}
   local recipes,seen={},{}
   for _,recipeID in ipairs(T.GetAllRecipeIDs() or {}) do
@@ -1157,6 +1200,14 @@ function GF.scanReport()
   local found={}
   for _,p in ipairs(scan()) do found[#found+1]=p.name..' '..p.rank end
   say('client language: '..v(GetLocale)..'; professions found: '..(#found>0 and table.concat(found,', ') or 'none'))
+  local other={}
+  for i=1,(GetNumSkillLines and GetNumSkillLines() or 0) do
+    local name,header,_,rank,_,_,maximum=GetSkillLineInfo(i)
+    if not header and type(name)=='string' and not isSecret(name) and not GF.englishProfession(name) then
+      other[#other+1]=name..' '..tostring(rank)..'/'..tostring(maximum)
+    end
+  end
+  say('other skills (not professions): '..(#other>0 and table.concat(other,', ') or 'none'))
   say('classic window: GetTradeSkillLine='..v(GetTradeSkillLine)..', GetNumTradeSkills='..v(GetNumTradeSkills)
     ..', GetCraftDisplaySkillLine='..v(GetCraftDisplaySkillLine)..', GetNumCrafts='..v(GetNumCrafts))
   local T=C_TradeSkillUI or {}
@@ -2350,7 +2401,7 @@ end
 function GF.showCrafterTooltip(owner,prof,c)
   GameTooltip:SetOwner(owner,'ANCHOR_RIGHT')
   GameTooltip:AddLine(c.character..(c.isMe and ' (You)' or ''),1,.82,0)
-  GameTooltip:AddLine(prof..'  '..c.rank..' / '..c.max..'  ('..GF.rankTitle(c.max)..')',1,1,1)
+  GameTooltip:AddLine(c.max>0 and (prof..'  '..c.rank..' / '..c.max..'  ('..GF.rankTitle(c.max)..')') or (prof..'  skill not shared'),1,1,1)
   GameTooltip:AddLine(c.recipeCount..' recipes shared',.8,.8,.8)
   GameTooltip:AddLine(GF.availabilityText(c),1,1,1)
   GameTooltip:AddLine('Data updated '..GF.updatedLabel(c.updated),.6,.6,.6)
@@ -2591,7 +2642,8 @@ update=function()
     b.bar:SetMinMaxValues(0,math.max(1,c.max))
     b.bar:SetValue(c.rank)
     b.bar:SetStatusBarColor(GF.rankColor(c.rank))
-    b.bar.text:SetText(c.rank..' / '..c.max)
+    -- Recipes without a skill: the crafter's addon didn't recognize the profession (older version, other language).
+    b.bar.text:SetText(c.max>0 and (c.rank..' / '..c.max) or '?')
     b.recipes:SetText(c.recipeCount>0 and ('|cffffd100'..c.recipeCount..'|r recipes') or '|cff808080no recipes|r')
     b.seen:SetText(c.online and '' or GF.availabilityText(c))
     b:SetScript('OnClick',function()
