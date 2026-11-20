@@ -852,6 +852,49 @@ def test_request_board():
     check('requests: expire after three days', b.GF_TEST_board() == '', b.GF_TEST_board())
 
 
+SPANISH = r"""
+  SPELLS={[3908]='Sastrería',[2259]='Alquimia',[2018]='Herrería',[7411]='Encantamiento',[4036]='Ingeniería',
+    [2108]='Peletería',[2575]='Minería',[8613]='Desuello',[2550]='Cocina',[3273]='Primeros auxilios',[7620]='Pesca',
+    [3914]='Rollo de paño de lino',[2387]='Capa de lino'}
+  function GetSpellInfo(id) return SPELLS[id] end
+  function GetLocale() return 'esES' end
+  RECIPE_SPELLS={['Rollo de paño de lino']=3914,['Capa de lino']=2387}
+  function GetTradeSkillRecipeLink(i) local id=RECIPE_SPELLS[TS_RECIPES[i]]; return id and ('|Hspell:'..id..'|h[x]|h') end
+"""
+ENGLISH = r"""
+  SPELLS={[3908]='Tailoring',[3914]='Bolt of Linen Cloth',[2387]='Linen Cloak'}
+  local old=GetSpellInfo
+  function GetSpellInfo(id) return SPELLS[id] or old(id) end
+"""
+
+
+def test_spanish_client():
+    roster = "ROSTER={{'Pablo',true},{'Bob',true}};"
+    pablo = Player('Pablo', ['Sastrería', 50, 75], ['Capa de lino', 'Rollo de paño de lino'], setup=roster + SPANISH)
+    bob = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'], setup=roster + ENGLISH)
+    for p in (pablo, bob):
+        p.fire('PLAYER_LOGIN')
+    run([pablo, bob], steps=60)
+    pablo.fire('TRADE_SKILL_SHOW')
+    run([pablo, bob])
+    view = bob.view('Pablo')
+    recipes = bob.lua.execute("local out={} for who,r in pairs(GuildForgeDB.guilds[next(GuildForgeDB.guilds)].members) do if who:find('Pablo') then for _,n in ipairs(r.recipes.Tailoring or {}) do out[#out+1]=n end end end table.sort(out) return table.concat(out,',')")
+    check('Spanish client: professions recognised and shared as Tailoring', view is not None and view[0] == 'Tailoring' and view[1] == 'Tailoring', str(view))
+    check('Spanish client: recipes shown in English for an English guildmate', recipes == 'Bolt of Linen Cloth,Linen Cloak', recipes)
+    # Settled: further check-ins don't send the list again.
+    sent = 0
+    for _ in range(3):
+        bob.lua.globals().SlashCmdList.GUILDFORGE('sync')
+        pablo.lua.globals().SlashCmdList.GUILDFORGE('sync')
+        for _ in range(150):
+            for p in (pablo, bob):
+                p.step()
+            for p in (pablo, bob):
+                sent += sum(1 for m in p.lua.globals().OUT.values() if m[2][:2] in ('B|', 'L|'))
+            deliver([pablo, bob])
+    check('Spanish client: no re-download loop between languages', sent == 0, '%d list messages' % sent)
+
+
 if __name__ == '__main__':
     test_load('GuildForge')
     test_load('GuildCraft')
@@ -879,5 +922,6 @@ if __name__ == '__main__':
     test_guild_bank_requests()
     test_guild_news()
     test_request_board()
+    test_spanish_client()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
     sys.exit(1 if failures else 0)

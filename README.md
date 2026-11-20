@@ -65,6 +65,7 @@ If your guild uses the [Guild Bank Toons](https://github.com/kota150/GuildBankTo
 - **Cooldowns** — Mooncloth, transmutes and the Salt Shaker are tracked and shared, so the guild can see who's ready.
 - **Not known in guild** — recipes seen at trainers that nobody in the guild has learned yet, with the skill they require. Anyone's trainer visits fill in the list for the whole guild.
 - **Minimap button** — a "GF" bubble with a badge counting guildmates online with GuildForge. Left-click to open, right-click to sync, drag to move.
+- **Any game language** — professions are recognised on Spanish, German and other clients, and guildmates' recipes show in your language when they're on 1.2.2 or later. GuildForge's own buttons and messages are still in English.
 - **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
 
 ### Settings
