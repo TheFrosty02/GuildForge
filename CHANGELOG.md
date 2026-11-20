@@ -10,7 +10,9 @@ All notable changes to GuildForge are listed here.
 ### Changed
 - `/gf scan` also lists the skills it didn't count as professions.
 
-## [1.2.2] - 2026-11-17
+## [1.2.2] - 2026-11-20
+
+Thanks to **Vichaoss** for this release.
 
 ### Fixed
 - **GuildForge didn't see your professions on a game client in another language** ([#3](https://github.com/TheFrosty02/GuildForge/issues/3)). It only knew the English profession names, so on a Spanish, German or other client it found no professions and shared no recipes. It now recognises professions in every language, and they reach the guild under the same names for everyone.

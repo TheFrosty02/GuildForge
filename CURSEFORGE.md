@@ -65,6 +65,7 @@ An optional Discord bot ([setup on GitHub](https://github.com/TheFrosty02/GuildF
 - **Search everything:** recipes, crafters, professions and reagents ("linen" finds everything that uses Linen Cloth), plus a **Have mats** filter.
 - **Minimap button** with a badge showing how many guildmates are online with GuildForge.
 - **Message log:** Settings → Message log shows everything GuildForge sends and receives, live, with a **Copy** button that gets it ready to paste into Discord or a bug report.
+- **Any game language:** professions are recognised on Spanish, German and other clients, and guildmates' recipes show in your language. (GuildForge's own buttons and messages are in English for now.)
 - **WoW Forever ready:** works with first and last names (and Forever's per-character realms), and holds its messages while the game blocks addon chat (like combat in instances).
 
 ![Settings](https://raw.githubusercontent.com/TheFrosty02/GuildForge/main/docs/screenshots/settings.png)
