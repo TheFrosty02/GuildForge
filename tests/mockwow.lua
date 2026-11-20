@@ -64,7 +64,7 @@ if CHAT_RESTRICTED~=nil then C_ChatInfo.AreOutgoingAddonChatMessagesRestricted=f
 ADDON_FOLDER=ADDON_FOLDER or 'GuildForge'
 C_AddOns={GetAddOnMetadata=function(name,field)
   if name~=ADDON_FOLDER then error('Couldn\'t find AddOn "'..tostring(name)..'"') end
-  return '@project-version@'
+  return ADDON_VERSION or '@project-version@'
 end}
 
 REALM=REALM or 'Living Flame'
