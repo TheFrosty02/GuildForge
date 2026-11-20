@@ -2,6 +2,17 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.2.3] - 2026-11-20
+
+### Added
+- **Update notice.** When a guildmate is on a newer GuildForge, you're told once per session in chat, and the bottom of the window shows the new version until you update. Test and development builds never prompt.
+
+### Fixed
+- **Trainer recipes, requests and cooldowns across languages.** 1.2.2 brought professions and recipes to every game language; these three still went by name, so a guild mixing languages saw them twice or not at all:
+  - A recipe seen at a trainer in another language no longer shows under **Not known in guild** when a guildmate knows it, and one seen at trainers in two languages is listed once, in yours.
+  - Requests show in your language, and you're told you can make one even when it was posted in another. (The requester needs 1.2.3 for this.)
+  - Cooldowns (Mooncloth, transmutes, Salt Shaker) are shared under one name and shown in yours. On non-English clients, transmutes are now grouped into one entry, as on English ones.
+
 ## [1.2.2] - 2026-11-20
 
 Thanks to **Vichaoss** for this release.

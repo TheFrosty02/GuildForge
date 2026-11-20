@@ -591,6 +591,27 @@ def test_filtered_scan_warns_once():
           '%d messages, %d saved: %s' % (len(said), saved, said))
 
 
+def test_update_notice():
+    # An older version hears about a newer one once per session; the newer one, and dev builds, hear nothing.
+    roster = "ROSTER={{'Arcbinky',true},{'Fortbek',true},{'Zed',true}}; PRINTED={}; print=function(s) PRINTED[#PRINTED+1]=s end;"
+    old = Player('Arcbinky', ['Tailoring', 50, 75], ['Bolt of Linen Cloth'], setup=roster + "ADDON_VERSION='1.2.2'")
+    new = Player('Fortbek', ['Mining', 50, 75], [], setup=roster + "ADDON_VERSION='v1.3.0'")
+    dev = Player('Zed', ['Mining', 5, 75], [], setup=roster)
+    players = (old, new, dev)
+    for p in players:
+        p.fire('PLAYER_LOGIN')
+    for _ in range(3):
+        for p in players:
+            p.lua.globals().SlashCmdList.GUILDFORGE('sync')
+        run(list(players), steps=120)
+    def notices(p):
+        return [m for m in p.lua.globals().PRINTED.values() if ' is out (' in m]
+    ok = len(notices(old)) == 1 and '1.3.0' in notices(old)[0] and not notices(new) and not notices(dev) \
+        and old.lua.eval('GF_NS.newestVersion') == '1.3.0'
+    check('update notice: once, only for older versions', ok,
+          '%s | %s | %s' % (notices(old), notices(new), notices(dev)))
+
+
 def test_tab_clears_search():
     # A search left over from one tab would turn Home and All into search results.
     a, g = bank_player()
@@ -858,11 +879,20 @@ SPANISH = r"""
     [3914]='Rollo de paño de lino',[2387]='Capa de lino'}
   function GetSpellInfo(id) return SPELLS[id] end
   function GetLocale() return 'esES' end
+  SPELLS[18560]='Tela lunar'; SPELLS[17187]='Transmutar: arcanita'
   RECIPE_SPELLS={['Rollo de paño de lino']=3914,['Capa de lino']=2387}
+  RECIPE_ITEMS={['Rollo de paño de lino']=2996,['Capa de lino']=2570}
+  function GetTradeSkillItemLink(i) return '|Hitem:'..(RECIPE_ITEMS[TS_RECIPES[i]] or 1)..'::|h[x]|h' end
+  -- Pablo knows Mooncloth, three days to go.
+  function IsPlayerSpell(id) return id==18560 end
+  function GetSpellCooldown(id) if id==18560 then return GetTime(),3*86400 end return 0,0 end
   function GetTradeSkillRecipeLink(i) local id=RECIPE_SPELLS[TS_RECIPES[i]]; return id and ('|Hspell:'..id..'|h[x]|h') end
 """
 ENGLISH = r"""
-  SPELLS={[3908]='Tailoring',[3914]='Bolt of Linen Cloth',[2387]='Linen Cloak'}
+  SPELLS={[3908]='Tailoring',[3914]='Bolt of Linen Cloth',[2387]='Linen Cloak',[18560]='Mooncloth',[17187]='Transmute: Arcanite'}
+  RECIPE_ITEMS={['Bolt of Linen Cloth']=2996,['Linen Cloak']=2570}
+  function GetTradeSkillItemLink(i) return '|Hitem:'..(RECIPE_ITEMS[TS_RECIPES[i]] or 1)..'::|h[x]|h' end
+  function GetItemInfo(id) if id==9999 then return 'Linen Hood' end end
   local old=GetSpellInfo
   function GetSpellInfo(id) return SPELLS[id] or old(id) end
 """
@@ -893,6 +923,30 @@ def test_spanish_client():
                 sent += sum(1 for m in p.lua.globals().OUT.values() if m[2][:2] in ('B|', 'L|'))
             deliver([pablo, bob])
     check('Spanish client: no re-download loop between languages', sent == 0, '%d list messages' % sent)
+    # Not known in guild: a trainer recipe in Spanish that a guildmate knows in English isn't "unknown", and one
+    # recipe seen at trainers in both languages is listed once, in yours.
+    bob.lua.execute("""local t=GuildForgeDB.recipeInfo.Tailoring
+      t['Capa de lino']={link='i2570',source='Trainer',remote=true,reagents={}}
+      t['Gorro de lino']={link='i9999',source='Trainer',remote=true,reagents={}}
+      t['Linen Hood']={link='i9999',source='Trainer',remote=true,reagents={}}""")
+    unknown = list(bob.lua.globals().GF_TEST_unknown('Tailoring').values())
+    check('languages: Not known in guild matches recipes by item', unknown == ['Linen Hood'], str(unknown))
+    # A request in English for a recipe Pablo knows in Spanish: he's told he can make it.
+    bob.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',2)")
+    run([pablo, bob], steps=60)
+    can = pablo.lua.eval('GF_NS.requestsYouCanMake()')
+    shown = pablo.lua.eval('GF_NS.requestName(GF_NS.allRequests()[1])')
+    check('languages: a request is recognised and shown in your language', can == 1 and shown == 'Rollo de paño de lino',
+          '%s can make, shown as %r' % (can, shown))
+    # Cooldowns go out under a shared key and show in each reader's language.
+    pablo.lua.execute("GF_NS.doRefresh()")
+    bob.lua.globals().SlashCmdList.GUILDFORGE('sync')
+    run([pablo, bob], steps=80)
+    keys = pablo.lua.execute("local out={} for _,b in pairs(GuildForgeDB.guilds) do for w,r in pairs(b.members) do for n in pairs(r.cooldowns or {}) do out[#out+1]=n end end end return table.concat(out,',')")
+    bob_cds = bob.lua.execute("local out={} for _,cd in ipairs((GF_NS.gatherCooldowns(nil,''))) do out[#out+1]=GF_NS.cooldownLabel(cd.name) end return table.concat(out,',')")
+    labels = pablo.lua.eval("GF_NS.cooldownLabel('Mooncloth')..'|'..GF_NS.cooldownLabel('Transmute')")
+    check('languages: cooldowns shared under one key, shown in your language',
+          keys == 'Mooncloth' and bob_cds == 'Mooncloth' and labels == 'Tela lunar|Transmutar', '%r | %r | %r' % (keys, bob_cds, labels))
 
 
 if __name__ == '__main__':
@@ -917,6 +971,7 @@ if __name__ == '__main__':
     test_discord_bot()
     test_forever_cooldowns()
     test_filtered_scan_warns_once()
+    test_update_notice()
     test_tab_clears_search()
     test_guild_bank_hidden()
     test_guild_bank_requests()

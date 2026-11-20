@@ -400,7 +400,7 @@ function GF.parseMessage(message,sender)
   if not senderMatches(sender,who) then return end
   if action=='S' then handleSummary(who,extra); return end
   if action=='A' then handleAsk(extra); return end
-  if action=='Q' or action=='Z' or action=='X' or action=='Y' then GF.receiveRequest(action,who,extra); return end
+  if action=='Q' or action=='R' or action=='Z' or action=='X' or action=='Y' then GF.receiveRequest(action,who,extra); return end
   if action=='B' then pending[who]={professions={},updated=now(),expected=tonumber(extra)}; return end
   if action=='P' then
     local record=pending[who]
@@ -659,11 +659,35 @@ function GF.recentlyAsked(askKey,seconds)
   pullRequestedAt[askKey]=now()
   return false
 end
+-- "1.2.2" as numbers; nil for dev and test builds, which never prompt or count as newer.
+function GF.versionParts(v)
+  if type(v)~='string' or isSecret(v) then return nil end
+  local a,b,c,rest=v:match('^v?(%d+)%.(%d+)%.?(%d*)(.*)$')
+  if not a or rest~='' then return nil end
+  return {tonumber(a),tonumber(b),tonumber(c) or 0}
+end
+function GF.isNewer(v,than)
+  local a,b=GF.versionParts(v),GF.versionParts(than)
+  if not a or not b then return false end
+  for i=1,3 do if a[i]~=b[i] then return a[i]>b[i] end end
+  return false
+end
+-- A guildmate's version; a newer one than ours is mentioned once per session and shown in the window's footer.
+function GF.noteVersion(who,version)
+  addonVersions[nameId(who)]=version
+  if not GF.isNewer(version,VERSION) or (GF.newestVersion and not GF.isNewer(version,GF.newestVersion)) then return end
+  GF.newestVersion=version
+  if not GF.updateNoticeShown then
+    GF.updateNoticeShown=true
+    log('GuildForge '..version..' is out ('..displayName(who)..' has it). You have '..VERSION..': update from CurseForge or your addon manager.',true)
+  end
+  requestUpdate()
+end
 -- Compare a guildmate's summary with what we saved and request only what differs.
 handleSummary=function(who,extra)
   local version,rest=(extra or ''):match('^([^;]*);?(.*)$')
   if not version then return end
-  addonVersions[nameId(who)]=version
+  GF.noteVersion(who,version)
   local record=db[who]
   local wants=''
   local listed={}
@@ -720,9 +744,30 @@ end
 local COOLDOWN_SPELLS={[18560]='Tailoring',[17187]='Alchemy',[11479]='Alchemy',[11480]='Alchemy',
   [17559]='Alchemy',[17560]='Alchemy',[17561]='Alchemy',[17562]='Alchemy',[17563]='Alchemy',[17564]='Alchemy',[17565]='Alchemy',[17566]='Alchemy'}
 local COOLDOWN_ITEMS={[15846]='Leatherworking'}
--- Classic transmutes share one timer, so they're tracked as a single "Transmute" entry.
+-- Cooldowns are shared under fixed English keys and shown in each reader's language. Classic transmutes share
+-- one timer, so they're tracked as a single "Transmute" entry.
+GF.COOLDOWN_KEYS={[18560]='Mooncloth'}
+GF.TRANSMUTE_SPELL=17187
+function GF.cooldownKey(id,prof) return prof=='Alchemy' and 'Transmute' or GF.COOLDOWN_KEYS[id] or GF.spellName(id) end
+-- "Transmute" in this client's language: what comes before the colon in "Transmute: Arcanite".
+function GF.transmuteWord()
+  local n=GF.spellName(GF.TRANSMUTE_SPELL)
+  return type(n)=='string' and not isSecret(n) and n:match('^(.-)%s*:') or 'Transmute'
+end
 function GF.cooldownName(name)
-  if type(name)=='string' and name:find('^Transmute') then return 'Transmute' end
+  if type(name)~='string' or isSecret(name) then return name end
+  if name:find('^Transmute') or name:find('^'..GF.transmuteWord():gsub('%p','%%%0')..'%s*:') then return 'Transmute' end
+  -- A cooldown's name in this client's language (from the trade window) maps back to its key.
+  for id,prof in pairs(COOLDOWN_SPELLS) do
+    if GF.spellName(id)==name then return GF.cooldownKey(id,prof) end
+  end
+  if GetItemInfo and name==GetItemInfo(15846) then return 'Salt Shaker' end
+  return name
+end
+function GF.cooldownLabel(name)
+  if name=='Transmute' then return GF.transmuteWord() end
+  if name=='Salt Shaker' then return (GetItemInfo and GetItemInfo(15846)) or name end
+  for id,key_ in pairs(GF.COOLDOWN_KEYS) do if key_==name then return GF.spellName(id) or name end end
   return name
 end
 function GF.remainingFrom(start,duration)
@@ -747,12 +792,22 @@ end
 local function checkCooldowns()
   if not db then return false end
   local changed=false
+  -- Cooldowns saved under their name in your language before 1.2.2 move to their shared key.
+  local mine=db[key()]
+  for name,cd in pairs(mine and mine.cooldowns or {}) do
+    local k=GF.cooldownName(name)
+    if k~=name then
+      mine.cooldowns[name]=nil
+      if not mine.cooldowns[k] then mine.cooldowns[k]=cd end
+      mine.cdStamp=now(); changed=true
+    end
+  end
   for id,prof in pairs(COOLDOWN_SPELLS) do
-    if GF.knowsSpell(id) and setMyCooldown(GF.cooldownName(GF.spellName(id)),prof,GF.remainingFrom(GF.spellCooldown(id))) then changed=true end
+    if GF.knowsSpell(id) and setMyCooldown(GF.cooldownKey(id,prof),prof,GF.remainingFrom(GF.spellCooldown(id))) then changed=true end
   end
   for id,prof in pairs(COOLDOWN_ITEMS) do
     if (GetItemCount and GetItemCount(id) or 0)>0 then
-      if setMyCooldown(GetItemInfo(id) or 'Salt Shaker',prof,GF.remainingFrom(GF.itemCooldown(id))) then changed=true end
+      if setMyCooldown('Salt Shaker',prof,GF.remainingFrom(GF.itemCooldown(id))) then changed=true end
     end
   end
   return changed
@@ -911,6 +966,38 @@ function GF.spellFromLink(link)
 end
 -- The skill level a recipe sorts by: where it turns gray (Forever's profession window), else what a trainer asks.
 function GF.recipeLevel(info) return info and (info.gray or info.req) or nil end
+-- A recipe link code's name in this client's language, from the game: enchants by spell, others by item.
+function GF.linkName(link)
+  if type(link)~='string' then return nil end
+  local kind,id=link:match('^([ie])(%d+)$')
+  if not kind then return nil end
+  local name
+  if kind=='e' then name=GF.spellName(tonumber(id)) elseif GetItemInfo then name=GetItemInfo(tonumber(id)) end
+  if type(name)=='string' and not isSecret(name) and name~='' then return clean(name) end
+end
+-- Of several names for one recipe (shared in different languages), the one to show here: the game's name for
+-- it in your language, else the first alphabetically. preferred (your own recipes) wins over both.
+function GF.pickName(names,link,preferred)
+  local localName=GF.linkName(link)
+  local best
+  for _,name in ipairs(names) do
+    if preferred and preferred[name] then return name end
+    if name==localName then best=name
+    elseif best~=localName and (not best or name<best) then best=name end
+  end
+  return best
+end
+-- The name a recipe with this link has here: one you know, else one guildmates' details are saved under.
+function GF.nameForLink(prof,link,fallback)
+  local infos=recipeInfo and recipeInfo[prof]
+  if not link or not infos then return fallback end
+  local mine=db and db[key()] and db[key()].recipes and db[key()].recipes[prof]
+  local own={}
+  for _,n in ipairs(type(mine)=='table' and mine or {}) do own[n]=true end
+  local names={}
+  for name,info in pairs(infos) do if type(info)=='table' and info.link==link then names[#names+1]=name end end
+  return GF.pickName(names,link,own) or fallback
+end
 -- Saves a finished scan and queues it for the guild when the recipe list changed.
 GF.filterWarned={}
 local function commitScan(prof,recipes,warnFiltered,levels)
@@ -1547,12 +1634,22 @@ function GF.requestPayload(r)
   -- The note goes last, so a long recipe name only shortens the note.
   return ('Q|'..key()..'|'..r.id..'~'..r.prof..'~'..r.name..'~'..r.qty..'~'..math.max(0,now()-r.t)..'~'..(r.takenBy or '')..'~'..(r.note or '')):sub(1,250)
 end
+-- R|who|id~link: the requested recipe's link, so guildmates in another language know which recipe it is.
+function GF.sendRequest(r)
+  addonSend(GF.requestPayload(r))
+  if r.link then addonSend('R|'..key()..'|'..r.id..'~'..r.link) end
+end
+-- A request's recipe as it's named here (the poster may play in another language).
+function GF.requestName(r)
+  return r.link and GF.nameForLink(r.prof,r.link,r.name) or r.name
+end
+function GF.canMakeRequest(r) return GF.knowsRecipe(r.prof,GF.requestName(r)) end
 function GF.queueMyRequests()
   local list=GF.requestsOf(key())
   local ids={}
   for _,r in ipairs(list) do ids[#ids+1]=r.id end
   addonSend('Z|'..key()..'|'..table.concat(ids,','))
-  for _,r in ipairs(list) do addonSend(GF.requestPayload(r)) end
+  for _,r in ipairs(list) do GF.sendRequest(r) end
 end
 function GF.knowsRecipe(prof,name)
   local list=db and db[key()] and db[key()].recipes and db[key()].recipes[prof]
@@ -1571,9 +1668,11 @@ function GF.postRequest(prof,name,qty,note)
   local r={id=GuildForgeDB.requestSeq,prof=prof,name=clean(name),qty=math.max(1,math.min(99,math.floor(tonumber(qty) or 1))),
     note=clean(note or ''):sub(1,60),t=now()}
   if r.note=='' then r.note=nil end
+  local info=recipeInfo and recipeInfo[prof] and recipeInfo[prof][r.name]
+  r.link=type(info)=='table' and info.link or nil
   board[key()]=board[key()] or {}
   board[key()][r.id]=r
-  addonSend(GF.requestPayload(r))
+  GF.sendRequest(r)
   log('Posted '..r.qty..'× '..r.name..' on the request board.',true)
   requestUpdate()
   return r
@@ -1610,14 +1709,20 @@ function GF.receiveRequest(action,who,extra)
     if not id or not craftable[prof] or tonumber(age)>GF.REQUEST_DAYS*86400 then return end
     id=tonumber(id)
     board[who]=board[who] or {}
-    local isNew=not board[who][id]
+    local old=board[who][id]
     local r={id=id,prof=prof,name=clean(name),qty=math.max(1,tonumber(qty) or 1),t=now()-tonumber(age),
-      takenBy=taken~='' and taken or nil,note=note~='' and clean(note):sub(1,60) or nil}
+      takenBy=taken~='' and taken or nil,note=note~='' and clean(note):sub(1,60) or nil,link=old and old.link}
     board[who][id]=r
-    -- Only fresh posts are announced, not the ones caught up on at login.
-    if isNew and tonumber(age)<600 and not r.takenBy and GF.knowsRecipe(prof,r.name) then
-      log(displayName(who)..' needs '..r.qty..'× '..r.name..', which you can make. See Requests in GuildForge.')
-    end
+    -- Only fresh posts are announced, not the ones caught up on at login. One in another language is
+    -- recognised once its link (R) arrives.
+    r.fresh=not old and tonumber(age)<600 and not r.takenBy or nil
+    GF.announceRequest(who,r)
+  elseif action=='R' then
+    local id,link=extra:match('^(%d+)~([ie]%d+)$')
+    local r=id and board[who] and board[who][tonumber(id)]
+    if not r then return end
+    r.link=link
+    GF.announceRequest(who,r)
   elseif action=='Z' then
     local keep={}
     for id in extra:gmatch('%d+') do keep[tonumber(id)]=true end
@@ -1628,7 +1733,7 @@ function GF.receiveRequest(action,who,extra)
     local r=list and id and list[tonumber(id)]
     if not r then return end
     list[r.id]=nil
-    if how=='d' and r.takenBy then GF.addNews({who=r.takenBy,kind='filled',prof=r.prof,name=r.name,value=r.qty,other=who}) end
+    if how=='d' and r.takenBy then GF.addNews({who=r.takenBy,kind='filled',prof=r.prof,name=GF.requestName(r),value=r.qty,other=who}) end
   elseif action=='Y' then
     local poster,id,back=extra:match('^(.-)~(%d+)~?(%d?)$')
     local list=poster and board[poster]
@@ -1641,9 +1746,15 @@ function GF.receiveRequest(action,who,extra)
       if poster==key() then log(displayName(who)..' will make your '..r.name..'.',true) end
     end
     -- The poster settles who has it when two crafters answer at once.
-    if poster==key() then addonSend(GF.requestPayload(r)) end
+    if poster==key() then GF.sendRequest(r) end
   end
   requestUpdate()
+end
+function GF.announceRequest(who,r)
+  if r.fresh and not r.takenBy and GF.canMakeRequest(r) then
+    r.fresh=nil
+    log(displayName(who)..' needs '..r.qty..'× '..GF.requestName(r)..', which you can make. See Requests in GuildForge.')
+  end
 end
 -- Everyone's open requests (current guild members only), oldest first, filtered by a search term.
 function GF.allRequests(term)
@@ -1653,7 +1764,7 @@ function GF.allRequests(term)
   for who in pairs(board or {}) do
     if who==key() or members[who] or not GF.rosterComplete() then
       for _,r in ipairs(GF.requestsOf(who)) do
-        local text=(r.name..' '..r.prof..' '..displayName(who)..' '..(r.note or '')):lower()
+        local text=(r.name..' '..GF.requestName(r)..' '..r.prof..' '..displayName(who)..' '..(r.note or '')):lower()
         if not term or term=='' or text:find(term,1,true) then list[#list+1]=r end
       end
     end
@@ -1664,7 +1775,7 @@ end
 function GF.requestsYouCanMake()
   local n=0
   for _,r in ipairs(GF.allRequests()) do
-    if r.who~=key() and not r.takenBy and GF.knowsRecipe(r.prof,r.name) then n=n+1 end
+    if r.who~=key() and not r.takenBy and GF.canMakeRequest(r) then n=n+1 end
   end
   return n
 end
@@ -2073,14 +2184,25 @@ function GF.professionData(prof,term)
     if filter then for _,c in ipairs(r.crafters) do if c.key==filter then byFilter=true; break end end end
     if byFilter and GF.recipeMatches(r,prof,term) and (not matsOnly or (r.times or 0)>0) then d.fr[#d.fr+1]=r end
   end
-  -- Recipes seen at trainers (or unlearned on Forever) that nobody in the guild has shared.
+  -- Recipes seen at trainers (or unlearned on Forever) that nobody in the guild has shared. Trainers in another
+  -- language list the same recipe under another name; its link says it's the same one.
+  local knownLinks,byLink,unknownNames={},{},{}
+  for _,r in ipairs(recipes) do if r.info and r.info.link then knownLinks[r.info.link]=true end end
   for name,info in pairs(recipeInfo and recipeInfo[prof] or {}) do
-    if not byName[name] then
-      d.unknownTotal=d.unknownTotal+1
-      -- Nobody can share reagents for these, so skip the mat counting and leave them out of "Have mats".
-      local r={name=name,crafters={},info=info}
-      if not filter and not matsOnly and GF.recipeMatches(r,prof,term) then d.unknown[#d.unknown+1]=r end
+    if not byName[name] and type(info)=='table' and not (info.link and knownLinks[info.link]) then
+      if info.link then
+        if not byLink[info.link] then byLink[info.link]={}; unknownNames[#unknownNames+1]=info.link end
+        table.insert(byLink[info.link],name)
+      else unknownNames[#unknownNames+1]=name end
     end
+  end
+  for _,entry in ipairs(unknownNames) do
+    local name=byLink[entry] and GF.pickName(byLink[entry],entry) or entry
+    local info=recipeInfo[prof][name]
+    d.unknownTotal=d.unknownTotal+1
+    -- Nobody can share reagents for these, so skip the mat counting and leave them out of "Have mats".
+    local r={name=name,crafters={},info=info}
+    if not filter and not matsOnly and GF.recipeMatches(r,prof,term) then d.unknown[#d.unknown+1]=r end
   end
   -- Lowest profession skill first: the skill a recipe needs (trainers), else where it turns gray (Forever's
   -- profession window); recipes with neither go last.
@@ -2126,7 +2248,7 @@ function GF.gatherCooldowns(prof,term)
       local character=displayName(who)
       for name,cd in pairs(record.cooldowns) do
         if type(cd)=='table' and (not prof or cd.prof==prof)
-          and (term=='' or found(character,term) or found(name,term) or found(cd.prof,term)) then
+          and (term=='' or found(character,term) or found(name,term) or found(GF.cooldownLabel(name),term) or found(cd.prof,term)) then
           local entry={character=character,isMe=(who==me),name=name,prof=cd.prof,readyAt=cd.readyAt or 0,updated=cd.updated}
           entry.online=entry.isMe or guildOnline[nameId(who)]==true
           entry.ready=entry.readyAt<=now()
@@ -2379,9 +2501,10 @@ function GF.addRequestRow(ctx,r)
   local mine=r.who==key()
   local online=GF.isOnline(r.who)
   GF.setDot(b.dot,online)
-  local info=recipeInfo[r.prof] and recipeInfo[r.prof][r.name]
+  local shown=GF.requestName(r)
+  local info=recipeInfo[r.prof] and recipeInfo[r.prof][shown]
   b.icon:SetTexture(GF.recipeIcon(r.prof,info))
-  b.name:SetText((r.qty>1 and ('|cffffffff'..r.qty..'×|r ') or '')..GF.recipeLabel(r.name,info))
+  b.name:SetText((r.qty>1 and ('|cffffffff'..r.qty..'×|r ') or '')..GF.recipeLabel(shown,info))
   local state=''
   if r.takenBy then state='  ·  |cff8fb8ff'..(r.takenBy==key() and 'you are making it' or (displayName(r.takenBy)..' is on it'))..'|r' end
   b.info:SetText('|cffa0a0a0'..(mine and 'You' or displayName(r.who))..'  ·  '..GF.agoText(now()-r.t)..'|r'..state)
@@ -2397,13 +2520,13 @@ function GF.addRequestRow(ctx,r)
   elseif r.takenBy then
     GF.setRowButton(b.b1,'Taken',false,displayName(r.takenBy)..' is making this.',nil)
   else
-    local knows=GF.knowsRecipe(r.prof,r.name)
+    local knows=GF.canMakeRequest(r)
     local why=not knows and "You don't know this recipe." or (not online and displayName(r.who)..' is offline; take it when they are on.')
     GF.setRowButton(b.b1,"I'll make it",not why,why or ('Tell '..displayName(r.who).." you'll make it (whispers them) and mark it taken for the guild."),
       function() GF.takeRequest(r) end)
   end
   b:SetScript('OnEnter',function(self)
-    if not GF.showLinkTooltip(self,info and info.link) then GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine(r.name,1,.82,0) end
+    if not GF.showLinkTooltip(self,info and info.link) then GameTooltip:SetOwner(self,'ANCHOR_RIGHT'); GameTooltip:AddLine(shown,1,.82,0) end
     GameTooltip:AddLine(' ')
     GameTooltip:AddLine((mine and 'You' or displayName(r.who))..' asked for '..r.qty..' ('..r.prof..'), '..GF.agoText(now()-r.t),1,1,1)
     if r.note then GameTooltip:AddLine('"'..r.note..'"',.9,.85,.6,true) end
@@ -2422,7 +2545,7 @@ function GF.drawRequests(ctx)
   for _,r in ipairs(GF.allRequests(ctx.term)) do
     if r.who==key() then mine[#mine+1]=r
     elseif r.takenBy==key() then making[#making+1]=r
-    elseif not r.takenBy and GF.knowsRecipe(r.prof,r.name) then canMake[#canMake+1]=r
+    elseif not r.takenBy and GF.canMakeRequest(r) then canMake[#canMake+1]=r
     else rest[#rest+1]=r end
   end
   local function group(id,label,list,empty)
@@ -2471,7 +2594,7 @@ function GF.drawHome(ctx)
   for _,r in ipairs(requests) do
     open=open+1
     if r.who==key() then mineOpen=mineOpen+1
-    elseif not r.takenBy and GF.knowsRecipe(r.prof,r.name) then canMake[#canMake+1]=r end
+    elseif not r.takenBy and GF.canMakeRequest(r) then canMake[#canMake+1]=r end
   end
   local entries=shoppingEntries()
   local _,order=GF.shoppingNeeds()
@@ -2608,11 +2731,11 @@ update=function()
     nextStripe(b.stripe)
     GF.setDot(b.dot,cd.online)
     b.icon:SetTexture(professionIcons[cd.prof] or QUESTION_ICON)
-    b.text:SetText(cd.character..(cd.isMe and ' |cff40ff40(You)|r' or '')..'  |cffa0a0a0-|r  |cffffd100'..cd.name..'|r')
+    b.text:SetText(cd.character..(cd.isMe and ' |cff40ff40(You)|r' or '')..'  |cffa0a0a0-|r  |cffffd100'..GF.cooldownLabel(cd.name)..'|r')
     b.status:SetText(cd.ready and '|cff40ff40Ready|r' or ('|cffffb040Ready in '..GF.durationText(cd.readyAt-now())..'|r'))
     b:SetScript('OnEnter',function(self)
       GameTooltip:SetOwner(self,'ANCHOR_RIGHT')
-      GameTooltip:AddLine(cd.name,1,.82,0)
+      GameTooltip:AddLine(GF.cooldownLabel(cd.name),1,.82,0)
       GameTooltip:AddLine(cd.character..'  ('..cd.prof..')',1,1,1)
       GameTooltip:AddLine('Reported '..GF.updatedLabel(cd.updated),.6,.6,.6)
       GameTooltip:Show()
@@ -2933,7 +3056,8 @@ update=function()
   end
   local guild=(IsInGuild and IsInGuild()) and (GetGuildInfo and GetGuildInfo('player') or 'In guild') or 'Not in guild'
   local queued=GF.queuedCount()>0 and ('  |cffa0a0a0·  sharing '..GF.queuedCount()..' messages|r') or ''
-  status:SetText('|cffffd100'..guild..'|r'..queued)
+  local newer=GF.newestVersion and ('  |cffa0a0a0·|r  |cff40ff40GuildForge '..GF.newestVersion..' is available|r') or ''
+  status:SetText('|cffffd100'..guild..'|r'..queued..newer)
 end
 
 selectTab=function(name)
@@ -3512,7 +3636,7 @@ frame:SetScript('OnEvent',function(_,event,...)
       local who,version,flag=msg:match('^V|([^|]+)|?([^|]*)|?(.*)$')
       if who==key() and not isSecret(sender) then GF.learnOwnName(sender); requestUpdate(); return end
       if who and senderMatches(sender,who) then
-        addonVersions[nameId(who)]=version
+        GF.noteVersion(who,version)
         -- Reply to a roll call after a random delay so a big guild's answers trickle in.
         if flag=='r' and syncReady and not summaryScheduled then
           summaryScheduled=true
