@@ -2,6 +2,18 @@
 
 All notable changes to GuildForge are listed here.
 
+## [1.2.2] - 2026-11-17
+
+### Fixed
+- **GuildForge didn't see your professions on a game client in another language** ([#3](https://github.com/TheFrosty02/GuildForge/issues/3)). It only knew the English profession names, so on a Spanish, German or other client it found no professions and shared no recipes. It now recognises professions in every language, and they reach the guild under the same names for everyone.
+- On a client in another language, profession ranks bought from a trainer ("Oficial", "Geselle") were saved and shared as recipes, and the crafter tooltip always showed the rank in English. Rank names now come from the game, in your language.
+- A recipe list could be sent over and over: a guildmate who checked your list while it was still on its way asked for it again once it had arrived, which started another round. GuildForge now waits for a list that's arriving and skips a request it has just answered.
+- Recipes from one profession could also be saved under another (Enchanting under Tailoring) on a client in another language. Opening the profession removes the copy, and guildmates drop it too.
+
+### Changed
+- **Guildmates' recipes show in your language**, when they're on 1.2.2 too and have opened that profession since updating. Trainer recipes, cooldowns and requests are still in the language of whoever shared them.
+- `/gf scan` also shows your game's language and the professions GuildForge found.
+
 ## [1.2.1] - 2026-11-14
 
 ### Added
