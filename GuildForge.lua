@@ -1099,6 +1099,11 @@ function GF.noteWindowSkill(prof,rank,maximum)
   for _,p in ipairs(mine and mine.professions or {}) do if p.name==prof then return end end
   if GF.learnProfessionName(prof,rank,maximum) then
     log('Your skill list names '..prof..' differently; learned it, now sharing your '..prof..' skill.')
+    -- You had it all along, so it isn't news: count it as known before saving, or it reads as taken up.
+    if mine then
+      mine.professions=mine.professions or {}
+      mine.professions[#mine.professions+1]={name=prof,rank=tonumber(rank) or 0,max=tonumber(maximum) or 0}
+    end
     save(); requestUpdate(); announce(false)
   end
 end
