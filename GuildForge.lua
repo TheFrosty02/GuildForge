@@ -1013,7 +1013,8 @@ function GF.pickName(names,link,preferred)
   for _,name in ipairs(names) do
     if preferred and preferred[name] then return name end
     if name==localName then best=name
-    elseif best~=localName and (not best or name<best) then best=name end
+    -- localName is nil while the game hasn't cached the item; the first name must still count.
+    elseif not best or (best~=localName and name<best) then best=name end
   end
   return best
 end

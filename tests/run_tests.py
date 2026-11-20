@@ -931,6 +931,16 @@ def test_spanish_client():
       t['Linen Hood']={link='i9999',source='Trainer',remote=true,reagents={}}""")
     unknown = list(bob.lua.globals().GF_TEST_unknown('Tailoring').values())
     check('languages: Not known in guild matches recipes by item', unknown == ['Linen Hood'], str(unknown))
+    # The same, for an item the game hasn't cached yet (no name for its link): one row, named, and no error.
+    bob.lua.execute("""local t=GuildForgeDB.recipeInfo.Tailoring
+      t['Gorro de lino']=nil; t['Linen Hood']=nil
+      t['Botas de lino']={link='i8888',source='Trainer',remote=true,reagents={}}
+      t['Linen Boots']={link='i8888',source='Trainer',remote=true,reagents={}}""")
+    try:
+        unknown = list(bob.lua.globals().GF_TEST_unknown('Tailoring').values())
+    except Exception as e:
+        unknown = [str(e).splitlines()[0]]
+    check('languages: Not known in guild with an item not cached yet', unknown == ['Botas de lino'], str(unknown))
     # A request in English for a recipe Pablo knows in Spanish: he's told he can make it.
     bob.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',2)")
     run([pablo, bob], steps=60)
