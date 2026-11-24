@@ -67,7 +67,7 @@ If your guild uses the [Guild Bank Toons](https://github.com/kota150/GuildBankTo
 - **Minimap button** — a "GF" bubble with a badge counting guildmates online with GuildForge. Left-click to open, right-click to sync, drag to move.
 - **Update notice** — when a guildmate has a newer GuildForge, you're told once per session and the window's footer shows it.
 - **Any game language** — professions are recognised on Spanish, German and other clients, and guildmates' recipes show in your language when they're on 1.2.2 or later. GuildForge's own buttons and messages are still in English.
-- **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed.
+- **Light on guild chat** — syncs send a short fingerprint of each recipe list, and guildmates only download lists that changed. Lists travel as recipe IDs, about half the messages of names, and learning a recipe sends just that change.
 
 ### Settings
 Click the gear next to **Sync** to toggle the minimap button, item tooltips, syncing on login and quiet mode, adjust the window scale, or re-share all of your recipes. If your data ever looks wrong, **Clear my data** forgets everything you've received from guildmates (keeping your own professions) and downloads it fresh.

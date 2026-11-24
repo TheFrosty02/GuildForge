@@ -127,6 +127,29 @@ function GF.englishProfession(name,skillLine)
   end
   return GF.localNames[name] or nil
 end
+-- The skill list can name a profession differently from its spell and window (seen with Cooking on a Spanish
+-- client). Such a profession was never found, so guildmates saw its skill as 0/0. A profession window knows its
+-- skill line and rank: the one unrecognized skill with that same rank and maximum is the same profession.
+-- Returns true when it learned a new name.
+function GF.learnProfessionName(english,rank,maximum)
+  rank,maximum=tonumber(rank),tonumber(maximum)
+  if not (english and rank and maximum and maximum>0 and GetNumSkillLines and GetSkillLineInfo) then return false end
+  local match
+  for i=1,GetNumSkillLines() do
+    local name,header,_,r,_,_,m=GetSkillLineInfo(i)
+    if not header and type(name)=='string' and not isSecret(name) and tonumber(r)==rank and tonumber(m)==maximum then
+      local known=GF.englishProfession(name)
+      if known==english then return false end
+      if not known then
+        if match then return false end -- two candidates: can't tell which one it is
+        match=name
+      end
+    end
+  end
+  if not match then return false end
+  GF.ownProfessionNames[match]=english
+  return true
+end
 local QUESTION_ICON='Interface\\Icons\\INV_Misc_QuestionMark'
 -- A white circle (the portrait mask) so vertex colors show true; tinting a dark texture stays dark.
 local DOT_TEXTURE='Interface\\CharacterFrame\\TempPortraitAlphaMask'
@@ -265,8 +288,43 @@ local function scan()
       end
     end
   end
+  -- Professions only a window could confirm (see GF.noteWindowSkill), with the skill that window showed.
+  -- Unknown skill lines only come and go when you learn or unlearn something, so fewer than when it was
+  -- saved means its line is gone: you unlearned it.
+  local stored,unknown=GF.windowSkills(),GF.unknownSkillCount()
+  for prof,s in pairs(stored) do
+    if unknown and s.unknown and unknown<s.unknown then
+      stored[prof]=nil
+    elseif valid[prof] and not seen[prof] then
+      if unknown and unknown>(s.unknown or 0) then s.unknown=unknown end
+      seen[prof]=true; list[#list+1]={name=prof,rank=s.rank,max=s.max}
+    end
+  end
   table.sort(list,function(a,b) return a.name<b.name end)
   return list
+end
+-- How many skill lines aren't recognised as professions; nil while the list is empty or a section is
+-- collapsed, when lines are hidden and the count means nothing.
+function GF.unknownSkillCount()
+  if not (GetNumSkillLines and GetSkillLineInfo) or GetNumSkillLines()==0 then return nil end
+  local count=0
+  for i=1,GetNumSkillLines() do
+    local name,header,expanded=GetSkillLineInfo(i)
+    if header then
+      if not expanded then return nil end
+    elseif not GF.englishProfession(name) then
+      count=count+1
+    end
+  end
+  return count
+end
+-- This character's professions confirmed only by their window, saved so later logins still share them.
+function GF.windowSkills()
+  if type(GuildForgeDB)~='table' or not playerName() then return {} end
+  GuildForgeDB.windowSkills=GuildForgeDB.windowSkills or {}
+  local k=key()
+  GuildForgeDB.windowSkills[k]=GuildForgeDB.windowSkills[k] or {}
+  return GuildForgeDB.windowSkills[k]
 end
 function GF.initDB()
   GuildForgeDB=GuildForgeDB or {}
@@ -277,6 +335,13 @@ function GF.initDB()
   GuildForgeDB.ui=GuildForgeDB.ui or {tab='All',matsOnly=false}
   GuildForgeDB.shopping=GuildForgeDB.shopping or {}
   GuildForgeDB.settings=GuildForgeDB.settings or {}
+  -- Profession names learned on this client language, kept so the next login finds them before any window opens.
+  GuildForgeDB.professionNames=GuildForgeDB.professionNames or {}
+  local locale=GetLocale and GetLocale() or 'unknown'
+  local learned=GuildForgeDB.professionNames[locale] or {}
+  for name,english in pairs(GF.ownProfessionNames) do learned[name]=english end
+  GuildForgeDB.professionNames[locale]=learned
+  GF.ownProfessionNames=learned
   local s=GuildForgeDB.settings
   if s.scale==nil then s.scale=1 end
   if s.syncOnLogin==nil then s.syncOnLogin=true end
@@ -482,8 +547,9 @@ function GF.drainChannel(channel,elapsed,canSend)
     local ok,throttled=GF.rawSend(channel.prefix,queue[1])
     if ok then
       -- Remember when each of our recipe lists finished going out (see queueRecipes).
-      local endProf=channel.prefix==RECIPE_PREFIX and queue[1]:match('^E|[^|]+|([^|]+)$')
-      if endProf then GF.fullSentAt=GF.fullSentAt or {}; GF.fullSentAt[endProf]=now() end
+      local endKind,endProf
+      if channel.prefix==RECIPE_PREFIX then endKind,endProf=queue[1]:match('^([EK])|[^|]+|([^|]+)$') end
+      if endProf then GF.fullSentAt=GF.fullSentAt or {}; GF.fullSentAt[endProf..'|'..(endKind=='K' and 'ids' or 'names')]=now() end
       table.remove(queue,1); channel.allowance=channel.allowance-1; channel.failures=0
       if channel.prefix==PREFIX then sent=sent+1 else recipeSent=recipeSent+1 end
     else
@@ -517,31 +583,84 @@ function GF.queuePacked(header,items,sep)
 end
 -- Format: D|who|prof|name~i12345 (or e7418 for enchants)~itemID:count,itemID:count
 -- One recipe's details: name~i12345 (or e7418 for enchants)~itemID:count,itemID:count
-function GF.detailEntry(prof,name)
+function GF.detailEntry(prof,name,token)
   local info=recipeInfo and recipeInfo[prof] and recipeInfo[prof][name]
   if not info then return nil end
   local parts={}
   for _,r in ipairs(info.reagents or {}) do
     if r.id then parts[#parts+1]=r.id..':'..(r.n or 1) end
   end
-  return clean(name)..'~'..(info.link or '')..'~'..table.concat(parts,',')..(info.gray and ('~'..info.gray) or '')
+  return (token or clean(name))..'~'..(info.link or '')..'~'..table.concat(parts,',')..(info.gray and ('~'..info.gray) or '')
 end
-queueRecipes=function(prof,force)
+-- Recipe lists go out in one of two formats. 1.3.0 and later send recipe IDs (the recipe's spell, or its name
+-- when it has none here): F count, J IDs packed, K end, P details. Every client names them in its own language.
+-- 1.2.x and older only read names: B count, L names, E end, M details, N IDs. The names format is still sent
+-- when one of them asks (G) or is online when the list changes.
+-- A recipe's ID as sent: its spell ID, or its name when its spell isn't named like it here.
+function GF.recipeToken(prof,name)
+  local id=GF.recipeSpellID(prof,name)
+  return id and tostring(id) or clean(name)
+end
+-- Your list as sorted IDs, and which name each one stands for.
+function GF.myTokens(prof,names)
+  local tokens,byToken={},{}
+  for _,name in ipairs(type(names)=='table' and names or {}) do
+    local t=GF.recipeToken(prof,name)
+    if not byToken[t] then byToken[t]=name; tokens[#tokens+1]=t end
+  end
+  table.sort(tokens)
+  return tokens,byToken
+end
+-- An ID as named here: a spell's name in this client's language, or the name itself.
+function GF.tokenName(token)
+  local id=token:match('^%d+$') and tonumber(token)
+  if not id then return token end
+  local n=GF.spellName(id)
+  if type(n)=='string' and not isSecret(n) and n~='' then return clean(n) end
+  return 'Recipe '..id
+end
+GF.idPeers={} -- nameId -> true for guildmates on 1.3.0 or later (they read and send recipe IDs)
+-- A guildmate on 1.2.x or older is online with GuildForge (they need lists by name).
+function GF.oldPeersOnline()
+  local me=nameId(key())
+  for id in pairs(activeSeen) do
+    if id~=me and not GF.idPeers[id] and (guildOnline[id] or next(guildOnline)==nil) then return true end
+  end
+  return false
+end
+queueRecipes=function(prof,force,format)
   local mine=db and db[key()]
   local entries=mine and mine.recipes and mine.recipes[prof]
   if not entries then return end
+  if not format then
+    queueRecipes(prof,force,'ids')
+    if GF.oldPeersOnline() then queueRecipes(prof,force,'names') end
+    return
+  end
+  local ids=format=='ids'
+  local sentKey=prof..'|'..format
   -- Several guildmates may pull the same list at once; one broadcast serves them all.
-  if not force and fullQueuedAt[prof] and now()-fullQueuedAt[prof]<30 then return end
+  if not force and fullQueuedAt[sentKey] and now()-fullQueuedAt[sentKey]<30 then return end
   -- A pull that crossed a broadcast (sent while the list was still on its way) is already answered: skip it
-  -- while the list is still queued, or within 20 seconds of its end (E) going out.
-  local head='B|'..key()..'|'..prof..'|'
+  -- while the list is still queued, or within 20 seconds of its end going out.
+  local head=(ids and 'F|' or 'B|')..key()..'|'..prof..'|'
   if not force then
-    if GF.fullSentAt and GF.fullSentAt[prof] and now()-GF.fullSentAt[prof]<20 then return end
+    if GF.fullSentAt and GF.fullSentAt[sentKey] and now()-GF.fullSentAt[sentKey]<20 then return end
     for _,queued in ipairs(recipeQueue) do if queued:sub(1,#head)==head then return end end
   end
-  fullQueuedAt[prof]=now()
-  -- B|count, then names packed several per message (L), then E, then packed details (M).
+  fullQueuedAt[sentKey]=now()
   local who=key()
+  if ids then
+    local tokens,byToken=GF.myTokens(prof,entries)
+    local details={}
+    for _,t in ipairs(tokens) do details[#details+1]=GF.detailEntry(prof,byToken[t],t) end
+    recipeQueue[#recipeQueue+1]=head..#tokens
+    GF.queuePacked('J|'..who..'|'..prof..'|',tokens,'~')
+    recipeQueue[#recipeQueue+1]='K|'..who..'|'..prof
+    GF.queuePacked('P|'..who..'|'..prof..'|',details,'^')
+    return
+  end
+  -- B|count, then names packed several per message (L), then E, then packed details (M).
   local names,details={},{}
   for _,name in ipairs(entries) do
     names[#names+1]=clean(name)
@@ -559,6 +678,32 @@ queueRecipes=function(prof,force)
     if id then ids[#ids+1]=index..':'..id end
   end
   if #ids>0 then GF.queuePacked('N|'..who..'|'..prof..'|'..listHash(entries)..'~',ids,',') end
+end
+-- Your list changed. Guildmates on 1.3.0+ get just the difference when it fits in one message (U, then the new
+-- recipes' details); anyone who missed it or doesn't match pulls the whole list. 1.2.x guildmates online get
+-- the whole list by name, as before.
+function GF.shareChange(prof,oldNames,newNames)
+  local oldTokens=GF.myTokens(prof,oldNames)
+  local newTokens,byToken=GF.myTokens(prof,newNames)
+  local sent=false
+  if type(oldNames)=='table' and #oldNames>0 then
+    local was,is={},{}
+    for _,t in ipairs(oldTokens) do was[t]=true end
+    for _,t in ipairs(newTokens) do is[t]=true end
+    local changes,added={},{}
+    for _,t in ipairs(newTokens) do if not was[t] then changes[#changes+1]='+'..t; added[#added+1]=t end end
+    for _,t in ipairs(oldTokens) do if not is[t] then changes[#changes+1]='-'..t end end
+    local msg='U|'..key()..'|'..prof..'|'..listHash(oldTokens)..'~'..listHash(newTokens)..'~'..table.concat(changes,'^')
+    if #changes>0 and #msg<=250 then
+      recipeQueue[#recipeQueue+1]=msg
+      local details={}
+      for _,t in ipairs(added) do details[#details+1]=GF.detailEntry(prof,byToken[t],t) end
+      GF.queuePacked('P|'..key()..'|'..prof..'|',details,'^')
+      sent=true
+    end
+  end
+  if not sent then queueRecipes(prof,true,'ids') end
+  if GF.oldPeersOnline() then queueRecipes(prof,true,'names') end
 end
 -- The recipe's spell ID when its spell has the recipe's name on this client.
 function GF.recipeSpellID(prof,name)
@@ -641,11 +786,13 @@ end
 function GF.summaryPayload()
   local mine=db and db[key()]
   if not mine then return nil end
-  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'K'..GF.catalogHash(),'q'..GF.requestHash(key())}
+  local parts={VERSION,'p'..GF.professionHash(mine.professions),'c'..(mine.cdStamp or 0),'K'..GF.catalogHash(),'q'..GF.requestHash(key()),'i1'}
   for index,prof in ipairs(professions) do
     local list=mine.recipes and mine.recipes[prof]
     if craftable[prof] and type(list)=='table' and #list>0 then
+      local tokens=GF.myTokens(prof,list)
       parts[#parts+1]=index..':'..#list..':'..listHash(list)
+      parts[#parts+1]='r'..index..':'..#tokens..':'..listHash(tokens)
     end
   end
   return 'S|'..key()..'|'..table.concat(parts,';')
@@ -690,10 +837,15 @@ handleSummary=function(who,extra)
   GF.noteVersion(who,version)
   local record=db[who]
   local wants=''
-  local listed={}
+  local listed,lists={},{}
   for token in rest:gmatch('[^;]+') do
     local kind,value=token:sub(1,1),token:sub(2)
-    if kind=='p' then
+    if kind=='i' then GF.idPeers[nameId(who)]=true
+    elseif kind=='r' then
+      local index,count,hash=value:match('^(%d+):(%d+):(%d+)$')
+      local prof=index and professions[tonumber(index)]
+      if prof and craftable[prof] then lists[prof]={count=tonumber(count),hash=tonumber(hash),ids=true} end
+    elseif kind=='p' then
       if not record or GF.professionHash(record.professions)~=tonumber(value) then wants=wants..'p' end
     elseif kind=='c' then
       local stamp=tonumber(value)
@@ -712,17 +864,20 @@ handleSummary=function(who,extra)
     else
       local index,count,hash=token:match('^(%d+):(%d+):(%d+)$')
       local prof=index and professions[tonumber(index)]
-      if prof and craftable[prof] then
-        listed[prof]=true
-        -- Compare with the names as they sent them, not as translated here.
-        local known=record and ((record.recipeRaw and record.recipeRaw[prof]) or (record.recipes and record.recipes[prof]))
-        local current=type(known)=='table' and #known==tonumber(count) and listHash(known)==tonumber(hash)
-        -- While their list is arriving the summary may be newer than what we have; that broadcast answers it.
-        local arriving=recipePending[who..'|'..prof]~=nil
-        if not current and not arriving and not GF.recentlyAsked(who..'|'..prof,60) then
-          recipeQueue[#recipeQueue+1]='G|'..key()..'|'..prof..'|'..who
-        end
+      if prof and craftable[prof] and not (lists[prof] and lists[prof].ids) then
+        lists[prof]={count=tonumber(count),hash=tonumber(hash)}
       end
+    end
+  end
+  for prof,l in pairs(lists) do
+    listed[prof]=true
+    -- Compare with the list as they sent it (IDs, or names before 1.3.0), not as named here.
+    local known=record and ((record.recipeRaw and record.recipeRaw[prof]) or (record.recipes and record.recipes[prof]))
+    local current=type(known)=='table' and #known==l.count and listHash(known)==l.hash
+    -- While their list is arriving the summary may be newer than what we have; that broadcast answers it.
+    local arriving=recipePending[who..'|'..prof]~=nil
+    if not current and not arriving and not GF.recentlyAsked(who..'|'..prof,60) then
+      recipeQueue[#recipeQueue+1]=(l.ids and 'H|' or 'G|')..key()..'|'..prof..'|'..who
     end
   end
   -- A summary lists every recipe list they have, so one it leaves out is gone (dropped, or a misnamed copy).
@@ -833,10 +988,10 @@ handleAsk=function(extra)
   if wants:find('q',1,true) and not GF.recentlyAsked('q-sent',20) then GF.queueMyRequests() end
 end
 
-function GF.applyDetail(prof,entry,record)
+function GF.applyDetail(prof,entry,record,byId)
   local name,link,reagentText,gray=entry:match('^([^~]+)~([^~]*)~([^~]*)~?(%d*)$')
   if not name then return end
-  name=GF.localRecipeName(record,prof,clean(name))
+  if byId then name=GF.tokenName(clean(name)) else name=GF.localRecipeName(record,prof,clean(name)) end
   recipeInfo[prof]=recipeInfo[prof] or {}
   -- Details scanned on one of your own characters carry reagent names; keep them.
   local existing=recipeInfo[prof][name]
@@ -848,6 +1003,50 @@ function GF.applyDetail(prof,entry,record)
   end
   recipeInfo[prof][name]={link=link,reagents=reagents,remote=true,gray=tonumber(gray)}
   requestUpdate()
+end
+-- A guildmate's list by ID (1.3.0+): kept as sent for sync checks, named here in your language.
+function GF.storeTokens(who,prof,tokens)
+  table.sort(tokens)
+  local record=db[who] or {professions={},updated=now()}
+  record.recipes=record.recipes or {}
+  record.recipeUpdated=record.recipeUpdated or {}
+  record.recipeRaw=record.recipeRaw or {}
+  record.recipeRaw[prof]=tokens
+  if record.recipeIds then record.recipeIds[prof]=nil end
+  local list,seen={},{}
+  for _,t in ipairs(tokens) do
+    local n=GF.tokenName(t)
+    if not seen[n] then seen[n]=true; list[#list+1]=n end
+  end
+  table.sort(list)
+  GF.recipeNews(who,prof,record.recipes[prof],list)
+  record.recipes[prof]=list
+  record.recipeUpdated[prof]=now()
+  -- A pull for this list still waiting in our queue is answered now; sending it would start another broadcast.
+  local g,h='G|'..key()..'|'..prof..'|'..who,'H|'..key()..'|'..prof..'|'..who
+  for i=#recipeQueue,1,-1 do if recipeQueue[i]==g or recipeQueue[i]==h then table.remove(recipeQueue,i) end end
+  db[who]=record
+  recipeReceived=recipeReceived+1
+  requestUpdate()
+end
+-- U|who|prof|<old hash>~<new hash>~+id^-id...: applied when we hold exactly their old list, else we pull it all.
+function GF.applyChange(who,prof,extra)
+  local old,new,changes=(extra or ''):match('^(%d+)~(%d+)~(.*)$')
+  if not old then return end
+  local record=db[who]
+  local raw=record and record.recipeRaw and record.recipeRaw[prof]
+  local tokens
+  if type(raw)=='table' and listHash(raw)==tonumber(old) then
+    local set={}
+    for _,t in ipairs(raw) do set[t]=true end
+    for sign,t in changes:gmatch('([%+%-])([^%^]+)') do set[t]=(sign=='+') or nil end
+    tokens={}
+    for t in pairs(set) do tokens[#tokens+1]=t end
+    table.sort(tokens)
+    if listHash(tokens)~=tonumber(new) then tokens=nil end
+  end
+  if tokens then GF.storeTokens(who,prof,tokens)
+  elseif not GF.recentlyAsked(who..'|'..prof,60) then recipeQueue[#recipeQueue+1]='H|'..key()..'|'..prof..'|'..who end
 end
 function GF.applyCatalog(prof,entry)
   local name,req,link=entry:match('^([^~]+)~(%d*)~([^~]*)$')
@@ -866,14 +1065,43 @@ function GF.receiveRecipe(msg,sender)
   if not action or not who or not craftable[prof] or who==key() then return end
   if not senderMatches(sender,who) then return end
   local pendingKey=who..'|'..prof
-  if action=='B' then
+  local byId=action=='F' or action=='J' or action=='K' or action=='P' or action=='U' or action=='H'
+  if byId then GF.idPeers[nameId(who)]=true
+  elseif GF.idPeers[nameId(who)] and (action=='B' or action=='I' or action=='L' or action=='E' or action=='D' or action=='M' or action=='N') then
+    return
+  end
+  if action=='F' then
+    local expected=tonumber(extra)
+    if not expected or expected<0 or expected>500 then return end
+    recipePending[pendingKey]={items={},seen={},expected=expected,ids=true}
+  elseif action=='J' then
+    local pending=recipePending[pendingKey]
+    if not pending or not pending.ids or not extra then return end
+    for raw in extra:gmatch('[^~]+') do
+      local item=clean(raw)
+      if not pending.seen[item] and #pending.items<pending.expected then
+        pending.seen[item]=true
+        pending.items[#pending.items+1]=item
+      end
+    end
+  elseif action=='K' then
+    local pending=recipePending[pendingKey]
+    if pending and pending.ids and #pending.items==pending.expected then GF.storeTokens(who,prof,pending.items) end
+    recipePending[pendingKey]=nil
+  elseif action=='P' then
+    for entry in (extra or ''):gmatch('[^%^]+') do GF.applyDetail(prof,entry,nil,true) end
+  elseif action=='U' then
+    GF.applyChange(who,prof,extra)
+  elseif action=='H' then
+    if extra==key() then queueRecipes(prof,false,'ids') end
+  elseif action=='B' then
     local expected=tonumber(extra)
     if not expected or expected<0 or expected>500 then return end
     recipePending[pendingKey]={items={},seen={},expected=expected}
   elseif action=='I' or action=='L' then
     -- I carries one recipe name; L carries several, separated by '~'.
     local pending=recipePending[pendingKey]
-    if not pending or not extra then return end
+    if not pending or pending.ids or not extra then return end
     for raw in extra:gmatch(action=='L' and '[^~]+' or '.+') do
       local item=clean(raw)
       -- A dropped E/B can splice two broadcasts together; repeats mean the list is unreliable, so skip them.
@@ -884,7 +1112,7 @@ function GF.receiveRecipe(msg,sender)
     end
   elseif action=='E' then
     local pending=recipePending[pendingKey]
-    if pending and #pending.items==pending.expected then
+    if pending and not pending.ids and #pending.items==pending.expected then
       local record=db[who] or {professions={},updated=now()}
       record.recipes=record.recipes or {}
       record.recipeUpdated=record.recipeUpdated or {}
@@ -928,7 +1156,7 @@ function GF.receiveRecipe(msg,sender)
     record.recipes[prof]=GF.translateRecipes(record,prof)
     requestUpdate()
   elseif action=='G' then
-    if extra==key() then queueRecipes(prof) end
+    if extra==key() then queueRecipes(prof,false,'names') end
   elseif action=='W' then
     -- Trainer recipes, separated by '^'. 1.0.9 and earlier sent T/U with Forever's unlearned recipes; ignored.
     for entry in (extra or ''):gmatch('[^%^]+') do GF.applyCatalog(prof,entry) end
@@ -983,7 +1211,8 @@ function GF.pickName(names,link,preferred)
   for _,name in ipairs(names) do
     if preferred and preferred[name] then return name end
     if name==localName then best=name
-    elseif best~=localName and (not best or name<best) then best=name end
+    -- localName is nil while the game hasn't cached the item; the first name must still count.
+    elseif not best or (best~=localName and name<best) then best=name end
   end
   return best
 end
@@ -1041,7 +1270,7 @@ local function commitScan(prof,recipes,warnFiltered,levels)
     GF.recipeNews(key(),prof,old,recipes)
     record.recipes[prof]=recipes
     record.recipeUpdated[prof]=now()
-    queueRecipes(prof,true)
+    GF.shareChange(prof,old,recipes)
     log('Scanned '..#recipes..' visible '..prof..' recipes; queued guild sharing.')
   elseif levels and not (record.levelsShared and record.levelsShared[prof]) then
     -- Lists shared before 1.2.0 had no recipe levels; send this one again once so guildmates can sort by level.
@@ -1062,10 +1291,42 @@ function GF.noteRecipeCooldown(prof,recipe,remaining)
     if setMyCooldown(name,prof,remaining or 0) then queueCooldowns() end
   end
 end
+-- A profession window is open: if your skill list missed this profession, learn its name there and re-share.
+function GF.noteWindowSkill(prof,rank,maximum)
+  rank,maximum=tonumber(rank),tonumber(maximum)
+  local mine=db and db[key()]
+  local stored=GF.windowSkills()
+  local listed=false
+  for _,p in ipairs(mine and mine.professions or {}) do if p.name==prof then listed=true end end
+  if listed and not stored[prof] then return end
+  if GF.learnProfessionName(prof,rank,maximum) then
+    stored[prof]=nil
+    if not listed then log('Your skill list names '..prof..' differently; learned it, now sharing your '..prof..' skill.') end
+  elseif rank and maximum and maximum>0 then
+    -- Two unknown skills have the same numbers (a maxed profession matches languages and maxed weapon skills),
+    -- so the name can't be learned. The window's own skill is right: share that, updated whenever it opens.
+    local s=stored[prof]
+    if s and s.rank==rank and s.max==maximum then return end
+    stored[prof]={rank=rank,max=maximum,unknown=GF.unknownSkillCount()}
+    if not listed then log('Your skill list names '..prof..' differently; sharing the skill its window shows.') end
+  else
+    return
+  end
+  -- You had it all along, so it isn't news: count it as known before saving, or it reads as taken up.
+  if mine and not listed then
+    mine.professions=mine.professions or {}
+    mine.professions[#mine.professions+1]={name=prof,rank=rank or 0,max=maximum or 0}
+  end
+  save(); requestUpdate()
+  if not listed then announce(false) end
+end
 function GF.scanTradeSkill()
   if not (GetNumTradeSkills and GetTradeSkillInfo) then return end
-  local prof=GF.englishProfession(GetTradeSkillLine and GetTradeSkillLine())
+  local windowName,windowRank,windowMax
+  if GetTradeSkillLine then windowName,windowRank,windowMax=GetTradeSkillLine() end
+  local prof=GF.englishProfession(windowName)
   if not craftable[prof] then return end
+  GF.noteWindowSkill(prof,windowRank,windowMax)
   local recipes,seen={},{}
   for i=1,GetNumTradeSkills() do
     local name,kind=GetTradeSkillInfo(i)
@@ -1131,6 +1392,7 @@ function GF.scanModernTradeSkill()
   local base=T.GetBaseProfessionInfo and T.GetBaseProfessionInfo()
   local prof=base and GF.englishProfession(base.professionName,base.professionID)
   if not craftable[prof] then return end
+  GF.noteWindowSkill(prof,base.skillLevel,base.maxSkillLevel)
   recipeInfo[prof]=recipeInfo[prof] or {}
   local recipes,seen={},{}
   for _,recipeID in ipairs(T.GetAllRecipeIDs() or {}) do
@@ -1244,6 +1506,14 @@ function GF.scanReport()
   local found={}
   for _,p in ipairs(scan()) do found[#found+1]=p.name..' '..p.rank end
   say('client language: '..v(GetLocale)..'; professions found: '..(#found>0 and table.concat(found,', ') or 'none'))
+  local other={}
+  for i=1,(GetNumSkillLines and GetNumSkillLines() or 0) do
+    local name,header,_,rank,_,_,maximum=GetSkillLineInfo(i)
+    if not header and type(name)=='string' and not isSecret(name) and not GF.englishProfession(name) then
+      other[#other+1]=name..' '..tostring(rank)..'/'..tostring(maximum)
+    end
+  end
+  say('other skills (not professions): '..(#other>0 and table.concat(other,', ') or 'none'))
   say('classic window: GetTradeSkillLine='..v(GetTradeSkillLine)..', GetNumTradeSkills='..v(GetNumTradeSkills)
     ..', GetCraftDisplaySkillLine='..v(GetCraftDisplaySkillLine)..', GetNumCrafts='..v(GetNumCrafts))
   local T=C_TradeSkillUI or {}
@@ -2472,7 +2742,7 @@ end
 function GF.showCrafterTooltip(owner,prof,c)
   GameTooltip:SetOwner(owner,'ANCHOR_RIGHT')
   GameTooltip:AddLine(c.character..(c.isMe and ' (You)' or ''),1,.82,0)
-  GameTooltip:AddLine(prof..'  '..c.rank..' / '..c.max..'  ('..GF.rankTitle(c.max)..')',1,1,1)
+  GameTooltip:AddLine(c.max>0 and (prof..'  '..c.rank..' / '..c.max..'  ('..GF.rankTitle(c.max)..')') or (prof..'  skill not shared'),1,1,1)
   GameTooltip:AddLine(c.recipeCount..' recipes shared',.8,.8,.8)
   GameTooltip:AddLine(GF.availabilityText(c),1,1,1)
   GameTooltip:AddLine('Data updated '..GF.updatedLabel(c.updated),.6,.6,.6)
@@ -2714,7 +2984,8 @@ update=function()
     b.bar:SetMinMaxValues(0,math.max(1,c.max))
     b.bar:SetValue(c.rank)
     b.bar:SetStatusBarColor(GF.rankColor(c.rank))
-    b.bar.text:SetText(c.rank..' / '..c.max)
+    -- Recipes without a skill: the crafter's addon didn't recognize the profession (older version, other language).
+    b.bar.text:SetText(c.max>0 and (c.rank..' / '..c.max) or '?')
     b.recipes:SetText(c.recipeCount>0 and ('|cffffd100'..c.recipeCount..'|r recipes') or '|cff808080no recipes|r')
     b.seen:SetText(c.online and '' or GF.availabilityText(c))
     b:SetScript('OnClick',function()
