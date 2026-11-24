@@ -801,6 +801,47 @@ def test_guild_news():
           and 'first in the guild' in rows and 'Bob Smith' in rows and 'Tailoring' in rows, rows)
 
 
+def test_profession_named_differently():
+    # Ana's skill list words Cooking differently from its window (seen on a Spanish client), so it wasn't found
+    # and guildmates saw her Cooking as 0 / 0. Opening the window learns the name.
+    differs = r"""
+      function GetLocale() return 'esES' end
+      function GetNumSkillLines() return 3 end
+      function GetSkillLineInfo(i)
+        if i==1 then return 'Professions',true end
+        if i==2 then return 'Tailoring',false,nil,50,nil,nil,75 end
+        return 'Arte culinario',false,nil,SKILL[2],nil,nil,SKILL[3]
+      end
+      function GetTradeSkillLine() return SKILL[1],SKILL[2],SKILL[3] end
+    """
+    roster = "ROSTER={{'Ana Zar',true},{'Bob Smith',true}};"
+    ana = Player('Ana', ['Cooking', 40, 75], ['Spiced Wolf Meat'], 'CAMWOW US2 Realm 1 PvE',
+                 setup=roster + NEWS_HELPERS + differs, surname='Zar')
+    bob = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'], 'CAMWOW US2 Realm 1 PvE',
+                 setup=roster + NEWS_HELPERS, surname='Smith')
+    for p in (ana, bob):
+        p.fire('PLAYER_LOGIN')
+    run([ana, bob])
+    before = bob.lua.execute(GF_SKILL_OF % 'Ana')
+    ana.fire('TRADE_SKILL_SHOW')
+    run([ana, bob])
+    learned = ana.lua.eval("((GuildForgeDB.professionNames or {}).esES or {})['Arte culinario']")
+    seen = bob.lua.execute(GF_SKILL_OF % 'Ana')
+    check('profession named differently: the window teaches the name, kept per language', learned == 'Cooking', str(learned))
+    check('profession named differently: guildmates see the real skill, not 0 / 0',
+          before == '' and seen == '40/75', 'before %r, after %r' % (before, seen))
+    news = ana.lua.globals().GF_TEST_news()
+    check('profession named differently: not news that you took it up', 'took' not in news, news)
+
+
+# A member's Cooking skill as "rank/max" (empty when none was shared).
+GF_SKILL_OF = """local out=''
+  for _,b in pairs(GuildForgeDB.guilds) do for who,r in pairs(b.members) do
+    if who:find('%s') then for _,p in ipairs(r.professions or {}) do
+      if p.name=='Cooking' then out=p.rank..'/'..p.max end end end end end
+  return out"""
+
+
 def test_request_board():
     kota, bob, cara = guild_of([('Kota', 'Arkbinky', ['First Aid', 9, 75], ['Linen Bandage']),
                                 ('Bob', 'Smith', ['Tailoring', 24, 75], ['Bolt of Linen Cloth']),
@@ -931,6 +972,16 @@ def test_spanish_client():
       t['Linen Hood']={link='i9999',source='Trainer',remote=true,reagents={}}""")
     unknown = list(bob.lua.globals().GF_TEST_unknown('Tailoring').values())
     check('languages: Not known in guild matches recipes by item', unknown == ['Linen Hood'], str(unknown))
+    # The same, for an item the game hasn't cached yet (no name for its link): one row, named, and no error.
+    bob.lua.execute("""local t=GuildForgeDB.recipeInfo.Tailoring
+      t['Gorro de lino']=nil; t['Linen Hood']=nil
+      t['Botas de lino']={link='i8888',source='Trainer',remote=true,reagents={}}
+      t['Linen Boots']={link='i8888',source='Trainer',remote=true,reagents={}}""")
+    try:
+        unknown = list(bob.lua.globals().GF_TEST_unknown('Tailoring').values())
+    except Exception as e:
+        unknown = [str(e).splitlines()[0]]
+    check('languages: Not known in guild with an item not cached yet', unknown == ['Botas de lino'], str(unknown))
     # A request in English for a recipe Pablo knows in Spanish: he's told he can make it.
     bob.lua.eval("GF_NS.postRequest('Tailoring','Bolt of Linen Cloth',2)")
     run([pablo, bob], steps=60)
@@ -976,6 +1027,7 @@ if __name__ == '__main__':
     test_guild_bank_hidden()
     test_guild_bank_requests()
     test_guild_news()
+    test_profession_named_differently()
     test_request_board()
     test_spanish_client()
     print('\n%d failed' % len(failures) if failures else '\nall passed')
