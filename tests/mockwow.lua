@@ -99,7 +99,10 @@ function GetTradeSkillCooldown(i) return TS_COOLDOWNS and TS_COOLDOWNS[TS_RECIPE
 function GetItemCount() return 0 end
 function GetItemInfo() return nil end
 function GetItemIcon() return 134400 end
-function GetSpellInfo() return 'Spell' end
+-- Apprentice profession spells are named after their profession, as on an English client; any other spell is 'Spell'.
+SPELL_NAMES={[2259]='Alchemy',[2018]='Blacksmithing',[7411]='Enchanting',[4036]='Engineering',[2108]='Leatherworking',
+  [2575]='Mining',[8613]='Skinning',[3908]='Tailoring',[2550]='Cooking',[3273]='First Aid',[7620]='Fishing'}
+function GetSpellInfo(id) return SPELL_NAMES[id] or 'Spell' end
 function GetSpellCooldown() return 0,0 end
 function GetItemCooldown() return 0,0 end
 function IsPlayerSpell() return false end
