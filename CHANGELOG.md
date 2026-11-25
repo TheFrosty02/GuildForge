@@ -2,6 +2,11 @@
 
 All notable changes to GuildForge are listed here.
 
+## [Unreleased]
+
+### Changed
+- **Profession names show in your language.** Headers, tooltips, the Home tab, guild news, the shopping list and chat messages now name professions as your game does ("Sastrería" on a Spanish client), and search finds them by that name too. Saved data and guild messages still use the English names, so nothing changes for guildmates or the Discord bot.
+
 ## [1.3.0] - 2026-11-23
 
 Thanks to **Vichaoss** for the fixes in this release.

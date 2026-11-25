@@ -1044,6 +1044,34 @@ def test_spanish_client():
           keys == 'Mooncloth' and bob_cds == 'Mooncloth' and labels == 'Tela lunar|Transmutar', '%r | %r | %r' % (keys, bob_cds, labels))
 
 
+def test_profession_names():
+    # Profession names are shown in your language; saved data and guild messages keep the English key.
+    roster = "ROSTER={{'Pablo',true},{'Bob',true}};"
+    pablo = Player('Pablo', ['Sastrería', 50, 75], ['Capa de lino', 'Rollo de paño de lino'], setup=roster + SPANISH)
+    bob = Player('Bob', ['Tailoring', 24, 75], ['Bolt of Linen Cloth'], setup=roster + ENGLISH)
+    for p in (pablo, bob):
+        p.fire('PLAYER_LOGIN')
+    run([pablo, bob], steps=60)
+    pablo.fire('TRADE_SKILL_SHOW')
+    run([pablo, bob])
+    labels = pablo.lua.execute("""local GF=GF_NS
+      if not GF.professionLabel then return 'no professionLabel' end
+      return GF.professionLabel('Tailoring')..','..GF.professionLabel('Herbalism')""")
+    check('profession names: shown in your language (Herbalism, with no spell, stays English)',
+          labels == 'Sastrería,Herbalism', labels)
+    english = bob.lua.execute("return GF_NS.professionLabel and GF_NS.professionLabel('Tailoring') or 'none'")
+    check('profession names: unchanged on an English client', english == 'Tailoring', english)
+    view = bob.view('Pablo')
+    check('profession names: still shared under the English key', view is not None and view[0] == 'Tailoring', str(view))
+    shown = pablo.lua.execute("""local GF=GF_NS
+      local who; for w in pairs(GuildForgeDB.guilds[next(GuildForgeDB.guilds)].members) do if w:find('Bob') then who=w end end
+      local took=GF.newsText({who=who,kind='took',prof='Tailoring',t=time()})
+      local d=GF.professionData('Tailoring','sastr')
+      return took:gsub('|c%x%x%x%x%x%x%x%x',''):gsub('|r','')..' / '..#d.fc..' crafters found'""")
+    check('profession names: news and search use your language',
+          shown.endswith('took up Sastrería / 2 crafters found'), shown)
+
+
 # 1.3.0: recipe lists by ID. A tailor with 60 recipes, each with a spell named like it.
 ID_RECIPES = ['Tailored Item Number %02d of the Long Recipe List' % i for i in range(1, 61)]
 ID_SETUP = r"""
@@ -1171,6 +1199,7 @@ if __name__ == '__main__':
     test_profession_named_differently()
     test_request_board()
     test_spanish_client()
+    test_profession_names()
     old = old_source()
     if old:
         test_id_sync(old)
